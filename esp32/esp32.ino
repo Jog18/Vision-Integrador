@@ -82,14 +82,20 @@ void callback(char* topic, byte* message, unsigned int length) {
   }
   Serial.println();
 
-  // controlar LED
-  if (messageTemp == "IZQ") { //si el mensaje recibido es ON, enciende led
+  // Controlar motores y LEDs según posición de la línea
+  if (messageTemp == "CENTRO") { // Línea dentro de la zona segura: ambos motores y LEDs encendidos
+    digitalWrite(ledizq, HIGH);
+    digitalWrite(ledder, HIGH);
+    digitalWrite(izq, HIGH);
+    digitalWrite(der, HIGH);
+  }
+  if (messageTemp == "IZQ") { // Línea salió a la izquierda: corregir activando solo lado izquierdo
     digitalWrite(ledizq, HIGH);
     digitalWrite(ledder, LOW);
     digitalWrite(izq, HIGH);
     digitalWrite(der, LOW);
   }
-  if (messageTemp == "DER") { //si el mensaje recibido es OFF, apaga el led
+  if (messageTemp == "DER") { // Línea salió a la derecha: corregir activando solo lado derecho
     digitalWrite(ledder, HIGH);
     digitalWrite(ledizq, LOW);
     digitalWrite(der, HIGH);
