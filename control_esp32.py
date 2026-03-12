@@ -13,7 +13,7 @@ import paho.mqtt.client as mqtt
 # Abrir cámara
 cap = cv2.VideoCapture(0)
 client = mqtt.Client()
-client.connect("10.165.252.191", 1883, 60)
+client.connect("10.180.31.191", 1883, 60)
 client.loop_start()
 
 posicion_actual = None
