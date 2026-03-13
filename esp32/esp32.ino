@@ -3,22 +3,40 @@
 
 const char* ssid = "JOSUE's Galaxy A52"; //nombre de la red
 const char* password = "jog18030"; //contraseña de nuestra red
-const char* mqtt_server = "10.165.252.191"; // broker
+const char* mqtt_server = "10.91.115.191"; // broker
 
 WiFiClient espClient;
 PubSubClient client(espClient);
 
 long lastMsg = 0;
-//const int ledPin = 4; // GPIO4 de la ESP32
+//Encendido y stop
+const int PIN_BOTON_OFF = 4; // botón para apagar
+const int PIN_BOTON_ON  = 18;   // botón para encender
+const int PIN_LED = 2;    // LED si esta encendido o en paro
+bool ledState = false;   // estado del LED para enviar a MQTT
+// estados estables de los botones
+bool buttonStateOn  = HIGH;
+bool buttonStateOff = HIGH;
+// lecturas anteriores (para detectar rebotes)
+bool lastReadingOn  = HIGH;
+bool lastReadingOff = HIGH;
+// tiempos de debounce
+unsigned long lastDebounceTimeOn  = 0;
+unsigned long lastDebounceTimeOff = 0;
+// tiempo de eliminación de rebote
+const unsigned long debounceDelay = 50;
+
+//Direccion
 const int ledizq = 16;
-const int ledder = 4;
+const int ledder = 5;
 const int izq = 17;
 const int der = 0;
 
+//Leer sensores. POT
 const int pinPot1 = 34; //GPI34 para leer el pot 1
 int valorADCpot1 = 0; //variable para almacenar la lectura del ADC
 float voltaje1 = 0.0; // variable para guardar el voltaje equivalente
-
+//LM35
 const int pinLM35 = 36;//GPI36 para leer LM35
 int adcTemp = 0;// //variable para almacenar el valor del ADC del LM35
 float voltajeLM35 = 0.0; // voltaje del lm35
@@ -42,6 +60,12 @@ void setup() {
   pinMode(ledder, OUTPUT);
   pinMode(izq, OUTPUT);
   pinMode(der, OUTPUT);
+
+  //Arranque y paro
+  pinMode(PIN_BOTON_ON, INPUT_PULLUP);
+  pinMode(PIN_BOTON_OFF, INPUT_PULLUP);
+  pinMode(PIN_LED, OUTPUT);
+  digitalWrite(PIN_LED, LOW);
 }
 
 // ---------- LOOP ----------
@@ -52,6 +76,7 @@ void loop() {
   }
 
   client.loop();
+  startStop();
 
   //POTENCIOMETRO1
   valorADCpot1 = analogRead(pinPot1); //leemos el ADC del pot1
@@ -76,7 +101,12 @@ void loop() {
     dtostrf(temperatura, 1, 3, temp); //convertimos el valor de temperatura a tipo char para que se pueda enviar a mosquitto
     client.publish("LM35/uno", temp); // mandamos la variable "temp" al topic "LM35/uno"
 
-
+   if(ledState) {
+    client.publish("arranque/paro", "MOVIMIENTO");
+    }
+   else {
+        client.publish("arranque/paro", "PARO");
+    }
   }
 
 }
@@ -115,7 +145,7 @@ void callback(char* topic, byte* message, unsigned int length) {
   }
   Serial.println();
 
-  
+
   // Controlar motores y LEDs según posición de la línea
   if (messageTemp == "CENTRO") { // Línea dentro de la zona segura: ambos motores y LEDs encendidos
     digitalWrite(ledizq, HIGH);
@@ -134,6 +164,24 @@ void callback(char* topic, byte* message, unsigned int length) {
     digitalWrite(ledizq, LOW);
     digitalWrite(der, HIGH);
     digitalWrite(izq, LOW);
+  }
+
+  if (messageTemp == "STOP") { // PARO desde interfaz
+    digitalWrite(ledizq, LOW);
+    digitalWrite(ledder, LOW);
+    digitalWrite(izq, LOW);
+    digitalWrite(der, LOW);
+    ledState = false;                // apagar LED
+        digitalWrite(PIN_LED, ledState);
+  }
+
+  if (messageTemp == "GO") { // ENCENDIDO desde interfaz
+    digitalWrite(ledizq, LOW);
+    digitalWrite(ledder, LOW);
+    digitalWrite(izq, LOW);
+    digitalWrite(der, LOW);
+    ledState = true;                // apagar LED
+        digitalWrite(PIN_LED, ledState);
   }
 
 }
@@ -155,4 +203,63 @@ void reconnect() {
       delay(5000);
     }
   }
+}
+
+void startStop() {
+  bool readingOn = digitalRead(PIN_BOTON_ON);
+
+  if (readingOn != lastReadingOn) {
+    lastDebounceTimeOn = millis();
+  }
+
+  if ((millis() - lastDebounceTimeOn) > debounceDelay) {
+
+    if (readingOn != buttonStateOn) {
+
+      buttonStateOn = readingOn;
+
+      // si se presiona el botón de encender
+      if (buttonStateOn == LOW) {
+
+        ledState = true;                 // encender LED
+        digitalWrite(PIN_LED, ledState);
+
+        Serial.println("LED ENCENDIDO");
+
+      }
+
+    }
+
+  }
+
+  lastReadingOn = readingOn;
+
+  bool readingOff = digitalRead(PIN_BOTON_OFF);
+
+  if (readingOff != lastReadingOff) {
+    lastDebounceTimeOff = millis();
+  }
+
+  if ((millis() - lastDebounceTimeOff) > debounceDelay) {
+
+    if (readingOff != buttonStateOff) {
+
+      buttonStateOff = readingOff;
+
+      // si se presiona el botón de apagar
+      if (buttonStateOff == LOW) {
+
+        ledState = false;                // apagar LED
+        digitalWrite(PIN_LED, ledState);
+
+        Serial.println("LED APAGADO");
+
+      }
+
+    }
+
+  }
+
+  lastReadingOff = readingOff;
+
 }
