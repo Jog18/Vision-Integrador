@@ -216,8 +216,26 @@ void callback(char* topic, byte* message, unsigned int length) {
   }
   Serial.println();
 
-  // Si hay emergencia, ignorar cualquier comando excepto informativo
-  if (emergencia) return;
+  // E-Stop remoto desde interfaz: activa emergencia igual que el botón físico
+  if (messageTemp == "EMERGENCIA") {
+    emergencia = true;
+    apagarTodo();
+    ledState = false;
+    digitalWrite(PIN_LED, LOW);
+    digitalWrite(PIN_LEDPARO, HIGH);
+    client.publish("arranque/paro", "EMERGENCIA");
+    Serial.println("PARO DE EMERGENCIA REMOTO");
+    return;
+  }
+
+  // Si hay emergencia física, solo permitir liberar con "RESET_EMERGENCIA"
+  if (emergencia) {
+    if (messageTemp == "RESET_EMERGENCIA" && digitalRead(PIN_ESTOP) == LOW) {
+      emergencia = false;
+      Serial.println("Emergencia reseteada desde interfaz");
+    }
+    return;
+  }
 
   if(ledState) {
       // Controlar motores y LEDs según posición de la línea
