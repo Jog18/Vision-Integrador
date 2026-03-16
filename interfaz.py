@@ -11,7 +11,7 @@ from collections import deque
 import time
 
 # --- Configuracion MQTT ---
-BROKER = "192.168.1.82"
+BROKER = "10.218.99.191"
 PORT = 1883
 
 # --- Datos en tiempo real ---

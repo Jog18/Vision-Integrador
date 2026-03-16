@@ -1,9 +1,9 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 
-const char* ssid = "INFINITUM6DD1"; //nombre de la red
-const char* password = "Qm3Gc1Aw4q"; //contraseña de nuestra red
-const char* mqtt_server = "192.168.1.82"; // broker
+const char* ssid = "JOSUE's Galaxy A52"; //nombre de la red
+const char* password = "jog18030"; //contraseña de nuestra red
+const char* mqtt_server = "10.218.99.191"; // broker
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -31,6 +31,8 @@ const unsigned long debounceDelay = 50;
 // E-Stop (Paro de emergencia) - Botón normalmente cerrado
 const int PIN_ESTOP = 13;
 volatile bool emergencia = false; // flag de emergencia (volatile porque se modifica en ISR)
+bool flag = false;
+
 
 //Direccion
 const int ledizq = 16;
@@ -120,7 +122,7 @@ void loop() {
 
     // Verificar si el E-Stop fue liberado (botón NC vuelve a cerrar → GPIO LOW)
     // NO reanuda automáticamente, solo limpia el flag para permitir rearranque manual
-    if (digitalRead(PIN_ESTOP) == LOW) {
+    if (flag == false && digitalRead(PIN_ESTOP) == LOW) {
       emergencia = false;
       Serial.println("E-Stop liberado. Presione ON o envie GO para reanudar.");
     }
@@ -219,6 +221,7 @@ void callback(char* topic, byte* message, unsigned int length) {
   // E-Stop remoto desde interfaz: activa emergencia igual que el botón físico
   if (messageTemp == "EMERGENCIA") {
     emergencia = true;
+    flag = true;
     apagarTodo();
     ledState = false;
     digitalWrite(PIN_LED, LOW);
@@ -232,6 +235,7 @@ void callback(char* topic, byte* message, unsigned int length) {
   if (emergencia) {
     if (messageTemp == "RESET_EMERGENCIA" && digitalRead(PIN_ESTOP) == LOW) {
       emergencia = false;
+      flag = false;
       Serial.println("Emergencia reseteada desde interfaz");
     }
     return;
@@ -264,7 +268,6 @@ void callback(char* topic, byte* message, unsigned int length) {
       digitalWrite(PIN_LEDPARO, HIGH);
     }
 
-
   if (messageTemp == "STOP") { // PARO desde interfaz
     apagarTodo();
     ledState = false;
@@ -276,7 +279,6 @@ void callback(char* topic, byte* message, unsigned int length) {
     ledState = true;
     digitalWrite(PIN_LED, ledState);
   }
-
 }
 
 // ---------- RECONNECT MQTT ----------
@@ -299,59 +301,36 @@ void reconnect() {
 
 void startStop() {
   bool readingOn = digitalRead(PIN_BOTON_ON);
-
   if (readingOn != lastReadingOn) {
     lastDebounceTimeOn = millis();
   }
-
   if ((millis() - lastDebounceTimeOn) > debounceDelay) {
-
     if (readingOn != buttonStateOn) {
-
       buttonStateOn = readingOn;
-
       // si se presiona el botón de encender
       if (buttonStateOn == LOW) {
-
         ledState = true;                 // encender LED
         digitalWrite(PIN_LED, ledState);
-
         Serial.println("LED ENCENDIDO");
-
       }
-
     }
-
   }
-
   lastReadingOn = readingOn;
-
   bool readingOff = digitalRead(PIN_BOTON_OFF);
-
   if (readingOff != lastReadingOff) {
     lastDebounceTimeOff = millis();
   }
-
   if ((millis() - lastDebounceTimeOff) > debounceDelay) {
-
     if (readingOff != buttonStateOff) {
-
       buttonStateOff = readingOff;
 
       // si se presiona el botón de apagar
       if (buttonStateOff == LOW) {
-
         ledState = false;                // apagar LED
         digitalWrite(PIN_LED, ledState);
-
         Serial.println("LED APAGADO");
-
       }
-
     }
-
   }
-
   lastReadingOff = readingOff;
-
 }
