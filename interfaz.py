@@ -8,7 +8,9 @@ import tkinter as tk
 from tkinter import messagebox
 import paho.mqtt.client as mqtt
 from collections import deque
-import time
+import csv
+import os
+from datetime import datetime
 
 # --- Configuracion MQTT ---
 BROKER = "10.218.99.191"
@@ -25,6 +27,38 @@ estado_agv = "PARO"  # PARO, MOVIMIENTO, EMERGENCIA
 alerta_temp_mostrada = False
 alerta_pot_mostrada = False
 
+# --- Registro de eventos CSV ---
+ARCHIVO_EVENTOS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "eventos.csv")
+ENCABEZADOS_CSV = ["Fecha", "Hora", "arranque/paro", "Origen", "LM35/uno", "pot/uno"]
+
+# Flag para saber si el ultimo comando fue enviado desde la interfaz
+origen_ultimo_comando = None  # "VIRTUAL" o None
+
+
+def inicializar_csv():
+    if not os.path.exists(ARCHIVO_EVENTOS):
+        with open(ARCHIVO_EVENTOS, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(ENCABEZADOS_CSV)
+
+
+def registrar_evento(evento, origen, temp, volt):
+    ahora = datetime.now()
+    fila = [
+        ahora.strftime("%Y-%m-%d"),
+        ahora.strftime("%H:%M:%S"),
+        evento,
+        origen,
+        f"{temp:.1f}",
+        f"{volt:.3f}"
+    ]
+    with open(ARCHIVO_EVENTOS, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(fila)
+
+
+inicializar_csv()
+
 
 # ===================== MQTT =====================
 def on_connect(client, userdata, flags, rc):
@@ -36,12 +70,22 @@ def on_connect(client, userdata, flags, rc):
 def on_message(client, userdata, msg):
     global voltaje_pot, temperatura_actual, estado_agv
     global alerta_temp_mostrada, alerta_pot_mostrada
+    global origen_ultimo_comando
 
     topic = msg.topic
     payload = msg.payload.decode()
 
     if topic == "arranque/paro":
-        estado_agv = payload
+        if payload != estado_agv:
+            # Determinar origen del evento
+            if origen_ultimo_comando is not None:
+                origen = "VIRTUAL"
+                origen_ultimo_comando = None
+            else:
+                origen = "FISICA"
+
+            estado_agv = payload
+            registrar_evento(payload, origen, temperatura_actual, voltaje_pot)
 
     elif topic == "LM35/uno":
         try:
@@ -51,6 +95,8 @@ def on_message(client, userdata, msg):
             # Alerta temperatura > 40
             if temperatura_actual > 40 and not alerta_temp_mostrada:
                 alerta_temp_mostrada = True
+                registrar_evento("ALERTA_TEMP", "SENSOR",
+                                 temperatura_actual, voltaje_pot)
                 root.after(0, lambda: mostrar_alerta_temp(temperatura_actual))
             elif temperatura_actual <= 40:
                 alerta_temp_mostrada = False
@@ -64,6 +110,8 @@ def on_message(client, userdata, msg):
             # Alerta pot < 0.5V
             if voltaje_pot < 0.5 and not alerta_pot_mostrada:
                 alerta_pot_mostrada = True
+                registrar_evento("ALERTA_POT", "SENSOR",
+                                 temperatura_actual, voltaje_pot)
                 root.after(0, lambda: mostrar_alerta_pot(voltaje_pot))
             elif voltaje_pot >= 0.5:
                 alerta_pot_mostrada = False
@@ -91,18 +139,26 @@ mqtt_client.loop_start()
 
 # ===================== COMANDOS =====================
 def cmd_arranque():
+    global origen_ultimo_comando
+    origen_ultimo_comando = "VIRTUAL"
     mqtt_client.publish("esp32/arranque", "GO")
 
 
 def cmd_paro():
+    global origen_ultimo_comando
+    origen_ultimo_comando = "VIRTUAL"
     mqtt_client.publish("esp32/arranque", "STOP")
 
 
 def cmd_emergencia():
+    global origen_ultimo_comando
+    origen_ultimo_comando = "VIRTUAL"
     mqtt_client.publish("esp32/arranque", "EMERGENCIA")
 
 
 def cmd_reset_emergencia():
+    global origen_ultimo_comando
+    origen_ultimo_comando = "VIRTUAL"
     mqtt_client.publish("esp32/arranque", "RESET_EMERGENCIA")
 
 
