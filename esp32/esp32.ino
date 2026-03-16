@@ -12,9 +12,10 @@ long lastMsg = 0;
 //Encendido y stop
 const int PIN_BOTON_OFF = 4; // botón para apagar
 const int PIN_BOTON_ON  = 18;   // botón para encender
-const int PIN_LED = 2;    // LED si esta encendido 
+const int PIN_LED = 2;    // LED si esta encendido
 const int PIN_LEDPARO = 23;    // LED si esta encendido en paro
 bool ledState = false;   // estado del LED para enviar a MQTT
+bool lastLedState = false; // estado anterior para detectar cambios
 // estados estables de los botones
 bool buttonStateOn  = HIGH;
 bool buttonStateOff = HIGH;
@@ -26,6 +27,10 @@ unsigned long lastDebounceTimeOn  = 0;
 unsigned long lastDebounceTimeOff = 0;
 // tiempo de eliminación de rebote
 const unsigned long debounceDelay = 50;
+
+// E-Stop (Paro de emergencia) - Botón normalmente cerrado
+const int PIN_ESTOP = 13;
+volatile bool emergencia = false; // flag de emergencia (volatile porque se modifica en ISR)
 
 //Direccion
 const int ledizq = 16;
@@ -42,6 +47,18 @@ const int pinLM35 = 36;//GPI36 para leer LM35
 int adcTemp = 0;// //variable para almacenar el valor del ADC del LM35
 float voltajeLM35 = 0.0; // voltaje del lm35
 float temperatura = 0.0; // temperatura equivalente
+
+// ---------- ISR PARO DE EMERGENCIA ----------
+void IRAM_ATTR isrEmergencia() {
+  emergencia = true;
+  // Apagar motores y LEDs inmediatamente desde la interrupción
+  digitalWrite(ledizq, LOW);
+  digitalWrite(ledder, LOW);
+  digitalWrite(izq, LOW);
+  digitalWrite(der, LOW);
+  digitalWrite(PIN_LED, LOW);
+  digitalWrite(PIN_LEDPARO, HIGH);
+}
 
 // ---------- SETUP ----------
 void setup() {
@@ -69,6 +86,15 @@ void setup() {
   pinMode(PIN_LEDPARO, OUTPUT);
   digitalWrite(PIN_LED, LOW);
   digitalWrite(PIN_LEDPARO, HIGH);
+
+  // E-Stop: botón NC conecta GPIO 13 a GND. Al presionar o cable roto → HIGH → emergencia
+  pinMode(PIN_ESTOP, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(PIN_ESTOP), isrEmergencia, RISING);
+
+  // Verificar estado inicial del E-Stop (por si arranca con el botón presionado o cable roto)
+  if (digitalRead(PIN_ESTOP) == HIGH) {
+    emergencia = true;
+  }
 }
 
 // ---------- LOOP ----------
@@ -79,6 +105,28 @@ void loop() {
   }
 
   client.loop();
+
+  // Si hay emergencia, mantener todo apagado y publicar estado
+  if (emergencia) {
+    apagarTodo();
+    ledState = false;
+
+    // Publicar emergencia solo cuando cambia el estado
+    if (lastLedState != ledState) {
+      lastLedState = ledState;
+      client.publish("arranque/paro", "EMERGENCIA");
+      Serial.println("PARO DE EMERGENCIA ACTIVADO");
+    }
+
+    // Verificar si el E-Stop fue liberado (botón NC vuelve a cerrar → GPIO LOW)
+    // NO reanuda automáticamente, solo limpia el flag para permitir rearranque manual
+    if (digitalRead(PIN_ESTOP) == LOW) {
+      emergencia = false;
+      Serial.println("E-Stop liberado. Presione ON o envie GO para reanudar.");
+    }
+    return; // No ejecutar nada más mientras haya emergencia
+  }
+
   startStop();
 
   //POTENCIOMETRO1
@@ -87,8 +135,28 @@ void loop() {
 
   //LM35
   adcTemp = analogRead(pinLM35); // lectura del ADC DE LM35
-  voltajeLM35 = (adcTemp * 5) / 4095.0; //convertimos a voltaje 
+  voltajeLM35 = (adcTemp * 5) / 4095.0; //convertimos a voltaje
   temperatura = voltajeLM35 * 100.0; //calculamos el equivalente a temperatura
+
+  // Publicar estado arranque/paro SOLO cuando cambia
+  if (ledState != lastLedState) {
+    lastLedState = ledState;
+    if (ledState) {
+      client.publish("arranque/paro", "MOVIMIENTO");
+      digitalWrite(PIN_LEDPARO, LOW);
+      Serial.println("Estado: MOVIMIENTO");
+    } else {
+      client.publish("arranque/paro", "PARO");
+      digitalWrite(PIN_LEDPARO, HIGH);
+      apagarTodo();
+      Serial.println("Estado: PARO");
+    }
+  }
+
+  // Mantener motores apagados si el sistema está en paro
+  if (!ledState) {
+    apagarTodo();
+  }
 
   long now = millis();
   if (now - lastMsg > 1000) {
@@ -97,27 +165,22 @@ void loop() {
     char vol1[10]; //variable tipo caracter a enviar por MQTT
     dtostrf(voltaje1, 1, 3, vol1); //convertimos el valor de voltaje a tipo char para que se pueda enviar a mosquitto
     client.publish("pot/uno", vol1); // mandamos la variable "mensaje"  al topic "pot/uno"
-    //client.publish("prueba/uno", "hola"); 
 
     //enviar datos LM35
     char temp[10]; //variable tipo caracter a enviar por MQTT
     dtostrf(temperatura, 1, 3, temp); //convertimos el valor de temperatura a tipo char para que se pueda enviar a mosquitto
     client.publish("LM35/uno", temp); // mandamos la variable "temp" al topic "LM35/uno"
-
-   if(ledState) {
-    client.publish("arranque/paro", "MOVIMIENTO");
-    digitalWrite(PIN_LEDPARO, LOW);
-    }
-   else {
-        client.publish("arranque/paro", "PARO");
-        digitalWrite(PIN_LEDPARO, HIGH);
-        digitalWrite(ledizq, LOW);
-        digitalWrite(ledder, LOW);
-        digitalWrite(izq, LOW);
-        digitalWrite(der, LOW);
-    }
   }
 }
+
+// ---------- APAGAR TODO ----------
+void apagarTodo() {
+  digitalWrite(ledizq, LOW);
+  digitalWrite(ledder, LOW);
+  digitalWrite(izq, LOW);
+  digitalWrite(der, LOW);
+}
+
 // ---------- WIFI ----------
 void setup_wifi() {
   delay(10);
@@ -149,12 +212,14 @@ void callback(char* topic, byte* message, unsigned int length) {
 
   for (int i = 0; i < length; i++) {
     Serial.print((char)message[i]);
-    messageTemp += (char)message[i]; 
+    messageTemp += (char)message[i];
   }
   Serial.println();
 
+  // Si hay emergencia, ignorar cualquier comando excepto informativo
+  if (emergencia) return;
+
   if(ledState) {
-    //digitalWrite(PIN_LEDPARO, LOW);
       // Controlar motores y LEDs según posición de la línea
     if (messageTemp == "CENTRO") { // Línea dentro de la zona segura: ambos motores y LEDs encendidos
       digitalWrite(ledizq, HIGH);
@@ -174,33 +239,24 @@ void callback(char* topic, byte* message, unsigned int length) {
       digitalWrite(der, HIGH);
       digitalWrite(izq, LOW);
     }
-    
+
     }
   else {
-      digitalWrite(ledder, LOW);
-      digitalWrite(ledizq, LOW);
-      digitalWrite(der, LOW);
-      digitalWrite(izq, LOW);
+      apagarTodo();
       digitalWrite(PIN_LEDPARO, HIGH);
     }
-  
+
 
   if (messageTemp == "STOP") { // PARO desde interfaz
-    digitalWrite(ledizq, LOW);
-    digitalWrite(ledder, LOW);
-    digitalWrite(izq, LOW);
-    digitalWrite(der, LOW);
-    ledState = false;                // apagar LED
-        digitalWrite(PIN_LED, ledState);
+    apagarTodo();
+    ledState = false;
+    digitalWrite(PIN_LED, ledState);
   }
 
   if (messageTemp == "GO") { // ENCENDIDO desde interfaz
-    digitalWrite(ledizq, LOW);
-    digitalWrite(ledder, LOW);
-    digitalWrite(izq, LOW);
-    digitalWrite(der, LOW);
-    ledState = true;                // apagar LED
-        digitalWrite(PIN_LED, ledState);
+    apagarTodo();
+    ledState = true;
+    digitalWrite(PIN_LED, ledState);
   }
 
 }
