@@ -1,9 +1,9 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 
-const char* ssid = "JOSUE's Galaxy A52"; //nombre de la red
-const char* password = "jog18030"; //contraseña de nuestra red
-const char* mqtt_server = "10.91.115.191"; // broker
+const char* ssid = "INFINITUM6DD1"; //nombre de la red
+const char* password = "Qm3Gc1Aw4q"; //contraseña de nuestra red
+const char* mqtt_server = "192.168.1.82"; // broker
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -12,7 +12,8 @@ long lastMsg = 0;
 //Encendido y stop
 const int PIN_BOTON_OFF = 4; // botón para apagar
 const int PIN_BOTON_ON  = 18;   // botón para encender
-const int PIN_LED = 2;    // LED si esta encendido o en paro
+const int PIN_LED = 2;    // LED si esta encendido 
+const int PIN_LEDPARO = 23;    // LED si esta encendido en paro
 bool ledState = false;   // estado del LED para enviar a MQTT
 // estados estables de los botones
 bool buttonStateOn  = HIGH;
@@ -28,7 +29,7 @@ const unsigned long debounceDelay = 50;
 
 //Direccion
 const int ledizq = 16;
-const int ledder = 5;
+const int ledder = 15;
 const int izq = 17;
 const int der = 0;
 
@@ -65,7 +66,9 @@ void setup() {
   pinMode(PIN_BOTON_ON, INPUT_PULLUP);
   pinMode(PIN_BOTON_OFF, INPUT_PULLUP);
   pinMode(PIN_LED, OUTPUT);
+  pinMode(PIN_LEDPARO, OUTPUT);
   digitalWrite(PIN_LED, LOW);
+  digitalWrite(PIN_LEDPARO, HIGH);
 }
 
 // ---------- LOOP ----------
@@ -103,12 +106,17 @@ void loop() {
 
    if(ledState) {
     client.publish("arranque/paro", "MOVIMIENTO");
+    digitalWrite(PIN_LEDPARO, LOW);
     }
    else {
         client.publish("arranque/paro", "PARO");
+        digitalWrite(PIN_LEDPARO, HIGH);
+        digitalWrite(ledizq, LOW);
+        digitalWrite(ledder, LOW);
+        digitalWrite(izq, LOW);
+        digitalWrite(der, LOW);
     }
   }
-
 }
 // ---------- WIFI ----------
 void setup_wifi() {
@@ -145,26 +153,37 @@ void callback(char* topic, byte* message, unsigned int length) {
   }
   Serial.println();
 
-
-  // Controlar motores y LEDs según posición de la línea
-  if (messageTemp == "CENTRO") { // Línea dentro de la zona segura: ambos motores y LEDs encendidos
-    digitalWrite(ledizq, HIGH);
-    digitalWrite(ledder, HIGH);
-    digitalWrite(izq, HIGH);
-    digitalWrite(der, HIGH);
-  }
-  if (messageTemp == "IZQ") { // Línea salió a la izquierda: corregir activando solo lado izquierdo
-    digitalWrite(ledizq, HIGH);
-    digitalWrite(ledder, LOW);
-    digitalWrite(izq, HIGH);
-    digitalWrite(der, LOW);
-  }
-  if (messageTemp == "DER") { // Línea salió a la derecha: corregir activando solo lado derecho
-    digitalWrite(ledder, HIGH);
-    digitalWrite(ledizq, LOW);
-    digitalWrite(der, HIGH);
-    digitalWrite(izq, LOW);
-  }
+  if(ledState) {
+    //digitalWrite(PIN_LEDPARO, LOW);
+      // Controlar motores y LEDs según posición de la línea
+    if (messageTemp == "CENTRO") { // Línea dentro de la zona segura: ambos motores y LEDs encendidos
+      digitalWrite(ledizq, HIGH);
+      digitalWrite(ledder, HIGH);
+      digitalWrite(izq, HIGH);
+      digitalWrite(der, HIGH);
+    }
+    if (messageTemp == "IZQ") { // Línea salió a la izquierda: corregir activando solo lado izquierdo
+      digitalWrite(ledizq, HIGH);
+      digitalWrite(ledder, LOW);
+      digitalWrite(izq, HIGH);
+      digitalWrite(der, LOW);
+    }
+    if (messageTemp == "DER") { // Línea salió a la derecha: corregir activando solo lado derecho
+      digitalWrite(ledder, HIGH);
+      digitalWrite(ledizq, LOW);
+      digitalWrite(der, HIGH);
+      digitalWrite(izq, LOW);
+    }
+    
+    }
+  else {
+      digitalWrite(ledder, LOW);
+      digitalWrite(ledizq, LOW);
+      digitalWrite(der, LOW);
+      digitalWrite(izq, LOW);
+      digitalWrite(PIN_LEDPARO, HIGH);
+    }
+  
 
   if (messageTemp == "STOP") { // PARO desde interfaz
     digitalWrite(ledizq, LOW);
@@ -195,7 +214,6 @@ void reconnect() {
       Serial.println("conectado");
       client.subscribe("esp32/control");
       client.subscribe("esp32/arranque");
-      client.subscribe("esp32/stop");
     } else {
       Serial.print("falló, rc=");
       Serial.print(client.state());
