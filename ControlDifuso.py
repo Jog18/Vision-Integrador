@@ -73,8 +73,10 @@ class ControlDifuso:
         - 90°  = línea recta
         - 180° = giro máximo a la derecha
 
-    Conjuntos difusos de entrada (3):
-        Izquierda, Centro, Derecha
+    Conjuntos difusos de entrada (7):
+        Muy_Izquierda, Med_Izquierda, Poco_Izquierda,
+        Centro,
+        Poco_Derecha, Med_Derecha, Muy_Derecha
 
     Conjuntos difusos de salida (7):
         Muy_Izquierda, Med_Izquierda, Poco_Izquierda,
@@ -86,13 +88,21 @@ class ControlDifuso:
         # Universo de salida discretizado (resolución de 1 grado)
         self.output_universe = np.linspace(0, 180, 181)
 
-        # ---- Conjuntos difusos de ENTRADA [0, 1] ----
-        # Izquierda: trapezoidal, máximo de 0 a 0.15, cae hasta 0.45
-        self.mf_in_izquierda_params = [0.0, 0.0, 0.15, 0.45]
-        # Centro: triangular, sube desde 0.25, pico en 0.5, baja hasta 0.75
-        self.mf_in_centro_params = [0.25, 0.5, 0.75]
-        # Derecha: trapezoidal, sube desde 0.55, máximo de 0.85 a 1.0
-        self.mf_in_derecha_params = [0.55, 0.85, 1.0, 1.0]
+        # ---- Conjuntos difusos de ENTRADA [0, 1] (7 conjuntos) ----
+        # Muy_Izquierda: trapezoidal, máximo de 0 a 0.05, cae hasta 0.20
+        self.mf_in_muy_izq_params = [0.0, 0.0, 0.05, 0.20]
+        # Med_Izquierda: triangular, sube desde 0.05, pico en 0.20, baja hasta 0.35
+        self.mf_in_med_izq_params = [0.05, 0.20, 0.35]
+        # Poco_Izquierda: triangular, sube desde 0.20, pico en 0.35, baja hasta 0.50
+        self.mf_in_poco_izq_params = [0.20, 0.35, 0.50]
+        # Centro: triangular, sube desde 0.35, pico en 0.50, baja hasta 0.65
+        self.mf_in_centro_params = [0.35, 0.50, 0.65]
+        # Poco_Derecha: triangular, sube desde 0.50, pico en 0.65, baja hasta 0.80
+        self.mf_in_poco_der_params = [0.50, 0.65, 0.80]
+        # Med_Derecha: triangular, sube desde 0.65, pico en 0.80, baja hasta 0.95
+        self.mf_in_med_der_params = [0.65, 0.80, 0.95]
+        # Muy_Derecha: trapezoidal, sube desde 0.80, máximo de 0.95 a 1.0
+        self.mf_in_muy_der_params = [0.80, 0.95, 1.0, 1.0]
 
         # ---- Conjuntos difusos de SALIDA [0, 180] ----
         self.mf_out_params = {
@@ -116,53 +126,88 @@ class ControlDifuso:
     def fuzzificar(self, pos):
         """
         Calcula los grados de pertenencia de la posición normalizada
-        a cada conjunto difuso de entrada.
+        a cada uno de los 7 conjuntos difusos de entrada.
         """
-        mu_izq = trapmf_scalar(pos, self.mf_in_izquierda_params)
-        mu_cen = trimf_scalar(pos, self.mf_in_centro_params)
-        mu_der = trapmf_scalar(pos, self.mf_in_derecha_params)
-        return mu_izq, mu_cen, mu_der
+        mu_muy_izq  = trapmf_scalar(pos, self.mf_in_muy_izq_params)
+        mu_med_izq  = trimf_scalar(pos, self.mf_in_med_izq_params)
+        mu_poco_izq = trimf_scalar(pos, self.mf_in_poco_izq_params)
+        mu_cen      = trimf_scalar(pos, self.mf_in_centro_params)
+        mu_poco_der = trimf_scalar(pos, self.mf_in_poco_der_params)
+        mu_med_der  = trimf_scalar(pos, self.mf_in_med_der_params)
+        mu_muy_der  = trapmf_scalar(pos, self.mf_in_muy_der_params)
+        return (mu_muy_izq, mu_med_izq, mu_poco_izq, mu_cen,
+                mu_poco_der, mu_med_der, mu_muy_der)
 
     # ----------------------------------------------------------------
     # PASO 2: EVALUACIÓN DE REGLAS (Base de Conocimiento + Inferencia)
     # ----------------------------------------------------------------
-    def evaluar_reglas(self, mu_izq, mu_cen, mu_der):
+    def evaluar_reglas(self, mu_muy_izq, mu_med_izq, mu_poco_izq,
+                       mu_cen, mu_poco_der, mu_med_der, mu_muy_der):
         """
-        Evalúa las 9 reglas difusas y retorna el nivel de activación
+        Evalúa las 15 reglas difusas y retorna el nivel de activación
         para cada conjunto de salida.
 
-        Reglas:
-        R1: IF Izquierda AND NOT Centro   → Muy_Izquierda
-        R2: IF Izquierda                  → Med_Izquierda
-        R3: IF Izquierda AND Centro       → Poco_Izquierda
-        R4: IF Centro AND NOT Izq AND NOT Der → Centro (centro puro)
-        R5: IF Centro                     → Centro
-        R6: IF Derecha AND Centro         → Poco_Derecha
-        R7: IF Derecha                    → Med_Derecha
-        R8: IF Derecha AND NOT Centro     → Muy_Derecha
-        R9: IF NOT Izq AND NOT Der AND NOT Centro → Centro (seguridad)
+        Reglas directas (7):
+        R1:  IF Muy_Izquierda                → Muy_Izquierda
+        R2:  IF Med_Izquierda                → Med_Izquierda
+        R3:  IF Poco_Izquierda               → Poco_Izquierda
+        R4:  IF Centro                       → Centro
+        R5:  IF Poco_Derecha                 → Poco_Derecha
+        R6:  IF Med_Derecha                  → Med_Derecha
+        R7:  IF Muy_Derecha                  → Muy_Derecha
+
+        Reglas de refuerzo en extremos (4):
+        R8:  IF Muy_Izq AND NOT Med_Izq      → Muy_Izquierda
+        R9:  IF Muy_Der AND NOT Med_Der       → Muy_Derecha
+        R10: IF Med_Izq AND NOT Poco_Izq      → Med_Izquierda
+        R11: IF Med_Der AND NOT Poco_Der       → Med_Derecha
+
+        Reglas de transición suave (3):
+        R12: IF Poco_Izq AND Centro           → Centro
+        R13: IF Poco_Der AND Centro           → Centro
+        R14: IF Centro AND NOT Poco_Izq AND NOT Poco_Der → Centro (puro)
+
+        Regla de seguridad (1):
+        R15: IF NOT ninguno significativo      → Centro
         """
         # Operador AND = min,  NOT x = 1 - x
 
-        r1 = min(mu_izq, 1.0 - mu_cen)          # Muy_Izquierda
-        r2 = mu_izq                               # Med_Izquierda
-        r3 = min(mu_izq, mu_cen)                  # Poco_Izquierda
-        r4 = min(mu_cen, 1.0 - mu_izq, 1.0 - mu_der)  # Centro (puro)
-        r5 = mu_cen                               # Centro
-        r6 = min(mu_der, mu_cen)                  # Poco_Derecha
-        r7 = mu_der                               # Med_Derecha
-        r8 = min(mu_der, 1.0 - mu_cen)           # Muy_Derecha
-        r9 = min(1.0 - mu_izq, 1.0 - mu_der, 1.0 - mu_cen)  # Centro (seguridad)
+        # --- 7 reglas directas ---
+        r1  = mu_muy_izq                                  # → Muy_Izquierda
+        r2  = mu_med_izq                                  # → Med_Izquierda
+        r3  = mu_poco_izq                                 # → Poco_Izquierda
+        r4  = mu_cen                                      # → Centro
+        r5  = mu_poco_der                                 # → Poco_Derecha
+        r6  = mu_med_der                                  # → Med_Derecha
+        r7  = mu_muy_der                                  # → Muy_Derecha
+
+        # --- 4 reglas de refuerzo en extremos ---
+        r8  = min(mu_muy_izq, 1.0 - mu_med_izq)          # → Muy_Izquierda
+        r9  = min(mu_muy_der, 1.0 - mu_med_der)          # → Muy_Derecha
+        r10 = min(mu_med_izq, 1.0 - mu_poco_izq)         # → Med_Izquierda
+        r11 = min(mu_med_der, 1.0 - mu_poco_der)         # → Med_Derecha
+
+        # --- 3 reglas de transición suave hacia centro ---
+        r12 = min(mu_poco_izq, mu_cen)                   # → Centro
+        r13 = min(mu_poco_der, mu_cen)                   # → Centro
+        r14 = min(mu_cen, 1.0 - mu_poco_izq,
+                  1.0 - mu_poco_der)                      # → Centro (puro)
+
+        # --- 1 regla de seguridad ---
+        r15 = min(1.0 - mu_muy_izq, 1.0 - mu_med_izq,
+                  1.0 - mu_poco_izq, 1.0 - mu_cen,
+                  1.0 - mu_poco_der, 1.0 - mu_med_der,
+                  1.0 - mu_muy_der)                       # → Centro
 
         # Agregar activaciones por conjunto de salida (OR = max)
         activaciones = {
-            'muy_izq':  r1,
-            'med_izq':  r2,
+            'muy_izq':  max(r1, r8),
+            'med_izq':  max(r2, r10),
             'poco_izq': r3,
-            'centro':   max(r4, r5, r9),
-            'poco_der': r6,
-            'med_der':  r7,
-            'muy_der':  r8,
+            'centro':   max(r4, r12, r13, r14, r15),
+            'poco_der': r5,
+            'med_der':  max(r6, r11),
+            'muy_der':  max(r7, r9),
         }
         return activaciones
 
@@ -200,8 +245,8 @@ class ControlDifuso:
         Output: ángulo del servo ∈ [0, 180]
         """
         posicion_norm = max(0.0, min(1.0, posicion_norm))
-        mu_izq, mu_cen, mu_der = self.fuzzificar(posicion_norm)
-        activaciones = self.evaluar_reglas(mu_izq, mu_cen, mu_der)
+        mus = self.fuzzificar(posicion_norm)
+        activaciones = self.evaluar_reglas(*mus)
         angulo = self.defuzzificar(activaciones)
         return angulo
 

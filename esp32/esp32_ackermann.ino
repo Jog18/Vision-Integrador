@@ -4,7 +4,7 @@
 
 const char* ssid = "JOSUE's Galaxy A52"; //nombre de la red
 const char* password = "jog18030"; //contraseña de nuestra red
-const char* mqtt_server = "10.218.99.191"; // broker
+const char* mqtt_server = "10.20.185.191"; // broker
 
 WiFiClient espClient;
 PubSubClient client(espClient);
