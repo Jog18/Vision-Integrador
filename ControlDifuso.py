@@ -68,10 +68,13 @@ class ControlDifuso:
         - 0.5 = centro del frame
         - 1.0 = borde derecho del frame
 
-    Salida: ángulo del servo [0, 180] grados
-        - 0°   = giro máximo a la izquierda
-        - 90°  = línea recta
-        - 180° = giro máximo a la derecha
+    Salida: ángulo del servo [80, 135] grados (rango mecánico Ackermann)
+        - 80°  = giro máximo a la izquierda
+        - 113° = línea recta
+        - 135° = giro máximo a la derecha
+
+    Nota: el rango es asimétrico — 33° disponibles a la izquierda (80–113)
+    y 22° a la derecha (113–135) — por lo que las MFs de salida no son simétricas.
 
     Conjuntos difusos de entrada (7):
         Muy_Izquierda, Med_Izquierda, Poco_Izquierda,
@@ -85,8 +88,14 @@ class ControlDifuso:
     """
 
     def __init__(self):
-        # Universo de salida discretizado (resolución de 1 grado)
-        self.output_universe = np.linspace(0, 180, 181)
+        # Rango mecánico real del servo Ackermann
+        self.servo_min = 80
+        self.servo_max = 135
+        self.servo_recto = 113
+        # Universo de salida discretizado (resolución de 1 grado) sobre el
+        # rango útil del servo: 80° – 135°
+        self.output_universe = np.linspace(self.servo_min, self.servo_max,
+                                           self.servo_max - self.servo_min + 1)
 
         # ---- Conjuntos difusos de ENTRADA [0, 1] (7 conjuntos) ----
         # Muy_Izquierda: trapezoidal, máximo de 0 a 0.05, cae hasta 0.20
@@ -104,15 +113,18 @@ class ControlDifuso:
         # Muy_Derecha: trapezoidal, sube desde 0.80, máximo de 0.95 a 1.0
         self.mf_in_muy_der_params = [0.80, 0.95, 1.0, 1.0]
 
-        # ---- Conjuntos difusos de SALIDA [0, 180] ----
+        # ---- Conjuntos difusos de SALIDA [80, 135] ----
+        # Rango asimétrico: 33° a la izquierda de 113°, 22° a la derecha.
+        # Lado izquierdo (80–113) dividido en 3 regiones de ~11°.
+        # Lado derecho (113–135) dividido en 3 regiones de ~7°.
         self.mf_out_params = {
-            'muy_izq':  [0, 0, 30],
-            'med_izq':  [15, 40, 65],
-            'poco_izq': [45, 67, 90],
-            'centro':   [75, 90, 105],
-            'poco_der': [90, 113, 135],
-            'med_der':  [115, 140, 165],
-            'muy_der':  [150, 180, 180],
+            'muy_izq':  [80, 80, 91],
+            'med_izq':  [80, 91, 102],
+            'poco_izq': [91, 102, 113],
+            'centro':   [102, 113, 120],
+            'poco_der': [113, 120, 127],
+            'med_der':  [120, 127, 135],
+            'muy_der':  [127, 135, 135],
         }
 
         # Pre-calcular MFs de salida sobre el universo
@@ -230,7 +242,7 @@ class ControlDifuso:
         # Centroide
         area_total = np.sum(aggregated)
         if area_total == 0:
-            return 90.0  # Sin información → recto
+            return float(self.servo_recto)  # Sin información → recto (113°)
 
         centroide = np.sum(self.output_universe * aggregated) / area_total
         return float(centroide)
@@ -242,7 +254,7 @@ class ControlDifuso:
         """
         Ejecuta el pipeline completo del control difuso.
         Input:  posicion_norm ∈ [0, 1]
-        Output: ángulo del servo ∈ [0, 180]
+        Output: ángulo del servo ∈ [80, 135]
         """
         posicion_norm = max(0.0, min(1.0, posicion_norm))
         mus = self.fuzzificar(posicion_norm)
@@ -264,11 +276,16 @@ UPPER_BLUE = np.array([140, 255, 255])
 
 MIN_AREA = 500
 
+# Rango mecánico del servo Ackermann
+SERVO_MIN = 80
+SERVO_MAX = 135
+SERVO_RECTO = 113
+
 
 def enviar_angulo_servo(client, angulo):
     """Publica el ángulo del servo al ESP32 vía MQTT."""
     angulo_int = int(round(angulo))
-    angulo_int = max(0, min(180, angulo_int))
+    angulo_int = max(SERVO_MIN, min(SERVO_MAX, angulo_int))
     client.publish(TOPIC_SERVO, str(angulo_int))
     return angulo_int
 
@@ -289,7 +306,7 @@ def main():
     client.connect(BROKER, PORT, 60)
     client.loop_start()
 
-    ultimo_angulo = 113
+    ultimo_angulo = SERVO_RECTO
 
     print("Control Difuso Ackermann iniciado. ESC para salir.")
 
@@ -320,7 +337,7 @@ def main():
         cv2.line(frame, (width // 2, 0), (width // 2, height),
                  (200, 200, 200), 1)
 
-        angulo = 90.0
+        angulo = float(SERVO_RECTO)
         objeto_detectado = False
 
         for contour in contours:
@@ -353,10 +370,11 @@ def main():
 
         # --- HUD ---
         angulo_int = int(round(angulo))
-        if angulo_int < 80:
+        # Zona muerta ±3° alrededor de 113° para la etiqueta
+        if angulo_int < SERVO_RECTO - 3:
             color = (0, 165, 255)
             etiqueta = "IZQUIERDA"
-        elif angulo_int > 100:
+        elif angulo_int > SERVO_RECTO + 3:
             color = (255, 165, 0)
             etiqueta = "DERECHA"
         else:
@@ -368,16 +386,18 @@ def main():
         cv2.putText(frame, etiqueta, (10, 70),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
 
-        # Barra indicadora inferior
-        barra_x = int((angulo / 180.0) * width)
+        # Barra indicadora inferior (rango [80, 135] mapeado al ancho del frame)
+        rango = SERVO_MAX - SERVO_MIN
+        barra_x = int(((angulo - SERVO_MIN) / rango) * width)
         cv2.line(frame, (barra_x, height - 30), (barra_x, height),
                  (0, 0, 255), 3)
         cv2.line(frame, (0, height - 15), (width, height - 15),
                  (100, 100, 100), 1)
 
-        # Marcas de 0°, 90°, 180° en la barra
-        for deg, lbl in [(0, "0"), (90, "90"), (180, "180")]:
-            px = int((deg / 180.0) * width)
+        # Marcas de 80°, 113° (recto), 135° en la barra
+        for deg, lbl in [(SERVO_MIN, "80"), (SERVO_RECTO, "113"),
+                         (SERVO_MAX, "135")]:
+            px = int(((deg - SERVO_MIN) / rango) * width)
             cv2.line(frame, (px, height - 25), (px, height - 5),
                      (200, 200, 200), 1)
             cv2.putText(frame, lbl, (px - 10, height - 28),

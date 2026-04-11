@@ -15,7 +15,7 @@ Cámara → Detección de color → Posición del objeto → Control Difuso → 
 | Aspecto | Diferencial (anterior) | Ackermann (actual) |
 |---------|----------------------|-------------------|
 | Dirección | Dos motores a distinta velocidad | Un servo de dirección |
-| Salida | Comandos discretos: IZQ, DER, CENTRO | Ángulo continuo: 0° – 180° |
+| Salida | Comandos discretos: IZQ, DER, CENTRO | Ángulo continuo: 80° – 135° (recto = 113°) |
 | Control | Bang-bang (3 estados) | Difuso (salida continua suave) |
 | Comunicación | `esp32/control` → texto | `esp32/servo/control` → ángulo numérico |
 
@@ -72,22 +72,26 @@ posicion_norm = centro_x_objeto / ancho_frame
 
 ### Ángulo del servo de dirección
 
-- **Universo de discurso:** [0, 180] grados
-- **0°** = giro máximo a la izquierda
-- **90°** = línea recta (sin giro)
-- **180°** = giro máximo a la derecha
+- **Universo de discurso:** [80, 135] grados (rango mecánico del Ackermann)
+- **80°**  = giro máximo a la izquierda
+- **113°** = línea recta (sin giro)
+- **135°** = giro máximo a la derecha
+
+> El rango es **asimétrico**: 33° disponibles a la izquierda de 113°
+> (80–113) y solo 22° a la derecha (113–135). Los conjuntos difusos de
+> salida se distribuyen de forma asimétrica para cubrir ambos lados.
 
 ### Conjuntos difusos de salida (7)
 
 | Conjunto | Tipo | Parámetros [a, b, c] | Rango efectivo | Centro |
 |----------|------|---------------------|----------------|--------|
-| **Muy Izquierda** | Triangular | [0, 0, 30] | 0° – 30° | 0° |
-| **Med Izquierda** | Triangular | [15, 40, 65] | 15° – 65° | 40° |
-| **Poco Izquierda** | Triangular | [45, 67, 90] | 45° – 90° | 67° |
-| **Centro** | Triangular | [75, 90, 105] | 75° – 105° | 90° |
-| **Poco Derecha** | Triangular | [90, 113, 135] | 90° – 135° | 113° |
-| **Med Derecha** | Triangular | [115, 140, 165] | 115° – 165° | 140° |
-| **Muy Derecha** | Triangular | [150, 180, 180] | 150° – 180° | 180° |
+| **Muy Izquierda**  | Triangular | [80, 80, 91]    | 80° – 91°    | 80°  |
+| **Med Izquierda**  | Triangular | [80, 91, 102]   | 80° – 102°   | 91°  |
+| **Poco Izquierda** | Triangular | [91, 102, 113]  | 91° – 113°   | 102° |
+| **Centro**         | Triangular | [102, 113, 120] | 102° – 120°  | 113° |
+| **Poco Derecha**   | Triangular | [113, 120, 127] | 113° – 127°  | 120° |
+| **Med Derecha**    | Triangular | [120, 127, 135] | 120° – 135°  | 127° |
+| **Muy Derecha**    | Triangular | [127, 135, 135] | 127° – 135°  | 135° |
 
 ### Distribución visual de los conjuntos de salida
 
@@ -95,13 +99,13 @@ posicion_norm = centro_x_objeto / ancho_frame
         Muy    Med    Poco         Poco   Med    Muy
         Izq    Izq    Izq  Centro  Der    Der    Der
          ▲      ▲      ▲     ▲      ▲      ▲      ▲
-        ╱╲    ╱  ╲   ╱  ╲  ╱  ╲   ╱  ╲  ╱  ╲    ╱╲
-       ╱  ╲  ╱    ╲ ╱    ╲╱    ╲ ╱    ╲╱    ╲  ╱  ╲
+        ╱╲    ╱  ╲   ╱  ╲   ╱ ╲   ╱  ╲  ╱  ╲    ╱╲
+       ╱  ╲  ╱    ╲ ╱    ╲ ╱   ╲ ╱    ╲╱    ╲  ╱  ╲
       ╱    ╲╱      ╳      ╳     ╳      ╳     ╲╱    ╲
-     ╱      ╳     ╱ ╲    ╱ ╲   ╱ ╲   ╱  ╲    ╳      ╲
-    ╱      ╱ ╲   ╱   ╲  ╱   ╲ ╱   ╲ ╱    ╲  ╱ ╲      ╲
-   ┼──────┼───┼──┼────┼─┼────┼┼────┼┼─────┼─┼───┼──────┤
-   0°    15° 30° 40° 45°65°67°75°90°105°113°115°135°150°165°180°
+     ╱      ╳     ╱ ╲    ╱ ╲   ╱ ╲    ╱ ╲    ╳      ╲
+    ╱      ╱ ╲   ╱   ╲  ╱   ╲ ╱   ╲  ╱   ╲  ╱ ╲      ╲
+   ┼──────┼───┼──┼────┼─┼────┼┼────┼─┼────┼─┼───┼──────┤
+   80°    91°   102°    113°   120°   127°     135°
 ```
 
 ---
@@ -204,9 +208,9 @@ Se calcula el centroide del área bajo la curva agregada:
               Σ μ_agregada(x_i)
 ```
 
-Donde `x_i` recorre el universo discretizado de 0 a 180 (181 puntos).
+Donde `x_i` recorre el universo discretizado de 80 a 135 (56 puntos con resolución de 1°).
 
-Si el área total es cero (sin detección), se retorna **90°** (recto) como valor por defecto.
+Si el área total es cero (sin detección), se retorna **113°** (recto) como valor por defecto.
 
 ---
 
@@ -237,7 +241,7 @@ Si el área total es cero (sin detección), se retorna **90°** (recto) como val
    - Centro = max(0.20, 0.20, 0.50) = 0.50
    - Poco/Med/Muy Derecha = 0.00
 
-4. **Defuzzificación (centroide):** El área resultante se concentra mayormente entre 0° y 105°, con el centroide aproximadamente en **~50°**, indicando un giro moderado a la izquierda.
+4. **Defuzzificación (centroide):** El área resultante se concentra mayormente en la mitad izquierda del rango (80°–113°), con el centroide desplazado hacia la izquierda respecto a 113°, indicando un giro moderado a la izquierda.
 
 ---
 
@@ -246,7 +250,7 @@ Si el área total es cero (sin detección), se retorna **90°** (recto) como val
 - **Protocolo:** MQTT
 - **Broker:** `10.91.115.191:1883`
 - **Tópico:** `esp32/servo/control`
-- **Mensaje:** Ángulo entero (0-180) como string
+- **Mensaje:** Ángulo entero (80–135, recto = 113) como string
 - **Frecuencia:** Solo se envía cuando el cambio es mayor a 2° respecto al último ángulo enviado, evitando sobrecarga en la comunicación.
 
 ---
@@ -271,7 +275,7 @@ La ventana de visualización muestra:
 3. **Posición normalizada:** Texto junto al objeto detectado
 4. **Ángulo del servo:** Valor numérico en la esquina superior izquierda
 5. **Dirección:** Texto IZQUIERDA / CENTRO / DERECHA con código de color
-6. **Barra indicadora:** Línea roja inferior que muestra visualmente la posición del servo, con marcas en 0°, 90° y 180°
+6. **Barra indicadora:** Línea roja inferior que muestra visualmente la posición del servo, con marcas en 80°, 113° y 135°
 
 ---
 

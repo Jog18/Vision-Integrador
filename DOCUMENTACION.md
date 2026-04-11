@@ -103,7 +103,7 @@ El sistema detecta un objeto azul con la camara, normaliza su posicion horizonta
                          +------------------------------+
                          |     ESP32 (Ackermann)        |
                          |                              |
-                         |  Recibe: angulo 0-180        |
+                         |  Recibe: angulo 80-135       |
                          |    (esp32/servo/control)     |
                          |  Recibe: GO, STOP,           |
                          |    EMERGENCIA, RESET_E...    |
@@ -218,13 +218,13 @@ Firmware del microcontrolador que controla el servo de direccion Ackermann.
 1. **Conecta al WiFi** y al **broker MQTT**.
 2. **Se suscribe** a los topics `esp32/servo/control` y `esp32/arranque`.
 3. **Servo de direccion** en GPIO 5 (pulso 500-2400 us):
-   - Recibe angulos continuos (0-180) del controlador difuso.
-   - Valida rango y escribe al servo.
-   - Posicion inicial y por defecto: 90 grados (recto).
-4. **LEDs indicadores de direccion:**
-   - Angulo < 80: LED izquierdo encendido (GPIO 16).
-   - Angulo > 100: LED derecho encendido (GPIO 15).
-   - 80-100: ambos LEDs encendidos (recto).
+   - Recibe angulos continuos (80-135) del controlador difuso.
+   - Valida rango mecanico del Ackermann y escribe al servo.
+   - Posicion inicial y por defecto: 113 grados (recto).
+4. **LEDs indicadores de direccion** (zona muerta +-3 grados alrededor de 113):
+   - Angulo < 110: LED izquierdo encendido (GPIO 16).
+   - Angulo > 116: LED derecho encendido (GPIO 15).
+   - 110-116: ambos LEDs encendidos (recto).
 5. **Sistema de arranque/paro** con tres modos:
    - **Botones fisicos**: ON (GPIO 18) y OFF (GPIO 4) con debounce de 50ms.
    - **Comandos MQTT**: `"GO"`, `"STOP"`, `"EMERGENCIA"`, `"RESET_EMERGENCIA"`.
@@ -311,10 +311,15 @@ u
 
 **Angulo del servo de direccion**
 
-- **Universo de discurso:** [0, 180] grados (discretizado en 181 puntos, resolucion de 1 grado)
-- **0 grados** = giro maximo a la izquierda
-- **90 grados** = linea recta (sin giro)
-- **180 grados** = giro maximo a la derecha
+- **Universo de discurso:** [80, 135] grados (discretizado en 56 puntos, resolucion de 1 grado)
+- **80 grados**  = giro maximo a la izquierda
+- **113 grados** = linea recta (sin giro)
+- **135 grados** = giro maximo a la derecha
+
+> El rango mecanico real del Ackermann es **asimetrico**: 33 grados disponibles
+> a la izquierda de 113 (80-113) y solo 22 grados a la derecha (113-135).
+> Los conjuntos difusos de salida estan distribuidos de forma asimetrica
+> para cubrir ambos lados con 3 regiones cada uno.
 
 ### 5.4 Conjuntos difusos de salida (7)
 
@@ -322,13 +327,13 @@ Todos los conjuntos de salida son **triangulares**:
 
 | # | Conjunto | Parametros [a, b, c] | Rango efectivo | Centro |
 |---|----------|---------------------|----------------|--------|
-| 1 | **Muy Izquierda** | [0, 0, 30] | 0 - 30 | 0 |
-| 2 | **Med Izquierda** | [15, 40, 65] | 15 - 65 | 40 |
-| 3 | **Poco Izquierda** | [45, 67, 90] | 45 - 90 | 67 |
-| 4 | **Centro** | [75, 90, 105] | 75 - 105 | 90 |
-| 5 | **Poco Derecha** | [90, 113, 135] | 90 - 135 | 113 |
-| 6 | **Med Derecha** | [115, 140, 165] | 115 - 165 | 140 |
-| 7 | **Muy Derecha** | [150, 180, 180] | 150 - 180 | 180 |
+| 1 | **Muy Izquierda**  | [80, 80, 91]    | 80 - 91    | 80  |
+| 2 | **Med Izquierda**  | [80, 91, 102]   | 80 - 102   | 91  |
+| 3 | **Poco Izquierda** | [91, 102, 113]  | 91 - 113   | 102 |
+| 4 | **Centro**         | [102, 113, 120] | 102 - 120  | 113 |
+| 5 | **Poco Derecha**   | [113, 120, 127] | 113 - 127  | 120 |
+| 6 | **Med Derecha**    | [120, 127, 135] | 120 - 135  | 127 |
+| 7 | **Muy Derecha**    | [127, 135, 135] | 127 - 135  | 135 |
 
 #### Distribucion visual de los conjuntos de salida
 
@@ -336,13 +341,13 @@ Todos los conjuntos de salida son **triangulares**:
         Muy    Med    Poco         Poco   Med    Muy
         Izq    Izq    Izq  Centro  Der    Der    Der
          ^      ^      ^     ^      ^      ^      ^
-        / \    /  \   /  \  /  \   /  \  /  \    / \
-       /   \  /    \ /    \/    \ /    \/    \  /   \
-      /     \/      X     XX     X      X     \/     \
-     /      /\     / \   / \   / \   /  \    /\      \
-    /      /  \   /   \ /   \ /   \ /    \  /  \      \
-   +------+---+--+----+-+---++----++-+---+-+---+------+
-   0    15  30  40  45 65 67 75 90 105 113 115 135 150 165 180
+        / \    /  \   /  \   / \   /  \  /  \    / \
+       /   \  /    \ /    \ /   \ /    \/    \  /   \
+      /     \/      X      X     X      X     \/     \
+     /      /\     / \    / \   / \    / \    /\      \
+    /      /  \   /   \  /   \ /   \  /   \  /  \      \
+   +------+---+--+----+-+-----++----+-+----+-+---+------+
+   80     91   102    113     120   127     135
 ```
 
 ### 5.5 Funciones de membresia
@@ -474,7 +479,7 @@ Muy_Derecha    = max(r7, r9)
 - **R10-R11 (refuerzo medio):** Usan NOT del vecino hacia el centro para reforzar el giro medio cuando no hay ambiguedad con la zona central.
 - **R12-R13 (transicion suave):** AND entre un conjunto lateral cercano y Centro genera correcciones suaves en la zona de transicion, evitando cambios bruscos.
 - **R14 (centro puro):** Refuerza la posicion recta cuando el objeto esta claramente centrado sin ambiguedad lateral.
-- **R15 (seguridad):** Garantiza que si ningun conjunto tiene activacion significativa, el servo se mantiene recto (90 grados).
+- **R15 (seguridad):** Garantiza que si ningun conjunto tiene activacion significativa, el servo se mantiene recto (113 grados).
 
 ### 5.8 Inferencia Mamdani
 
@@ -500,9 +505,9 @@ angulo = -----------------------------------
               SUM(mu_agregada(x_i))
 ```
 
-Donde `x_i` recorre el universo discretizado de 0 a 180 (181 puntos con resolucion de 1 grado).
+Donde `x_i` recorre el universo discretizado de 80 a 135 (56 puntos con resolucion de 1 grado).
 
-Si el area total es cero (sin deteccion o sin activacion), se retorna **90 grados** (recto) como valor por defecto.
+Si el area total es cero (sin deteccion o sin activacion), se retorna **113 grados** (recto) como valor por defecto.
 
 ### 5.10 Ejemplo de funcionamiento
 
@@ -690,7 +695,7 @@ El boton **GENERAR REPORTE** en la interfaz SCADA crea un archivo `Reporte_SCADA
 
 | Topic | Publicador | Suscriptor | Contenido |
 |---|---|---|---|
-| `esp32/servo/control` | ControlDifuso.py | ESP32 | Angulo del servo (0-180) |
+| `esp32/servo/control` | ControlDifuso.py | ESP32 | Angulo del servo (80-135, recto=113) |
 | `esp32/arranque` | Scada.py | ESP32 | GO, STOP, EMERGENCIA, RESET_EMERGENCIA |
 | `arranque/paro` | ESP32 | Scada.py | MOVIMIENTO, PARO, EMERGENCIA |
 | `pot/uno` | ESP32 | Scada.py | Voltaje del potenciometro (0-3.3V) |

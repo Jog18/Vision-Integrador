@@ -37,7 +37,11 @@ bool flag = false;
 // ---- Servo de dirección Ackermann ----
 const int PIN_SERVO = 5;  // Pin PWM para el servo de dirección
 Servo servoDir;
-int anguloActual = 113;    // 113° = recto
+// Rango mecánico del servo Ackermann: 80° (izq máx) – 135° (der máx), 113° = recto
+const int SERVO_MIN   = 80;
+const int SERVO_MAX   = 135;
+const int SERVO_RECTO = 113;
+int anguloActual = SERVO_RECTO;
 
 // LEDs indicadores de dirección (se mantienen para feedback visual)
 const int ledizq = 16;
@@ -121,7 +125,7 @@ void setup() {
   ESP32PWM::allocateTimer(3);
   servoDir.setPeriodHertz(50);           // servo estándar = 50 Hz
   servoDir.attach(PIN_SERVO, 500, 2400); // min/max pulse width en microsegundos
-  servoDir.write(90); // Posición inicial: recto
+  servoDir.write(SERVO_RECTO); // Posición inicial: recto (113°)
 
   // PWM del motor DESPUÉS del servo, así el servo toma un timer libre primero
   ledcAttach(PWMA, PWM_FREQ, PWM_RESOLUTION);
@@ -227,8 +231,8 @@ void loop() {
 void apagarTodo() {
   digitalWrite(ledizq, LOW);
   digitalWrite(ledder, LOW);
-  servoDir.write(90); // Centrar servo (recto)
-  anguloActual = 90;
+  servoDir.write(SERVO_RECTO); // Centrar servo (113° = recto)
+  anguloActual = SERVO_RECTO;
   stopMotor();        // Detener motor
 }
 
@@ -293,19 +297,19 @@ void callback(char* topic, byte* message, unsigned int length) {
   // ---- Control del servo de dirección (desde control difuso) ----
   if (String(topic) == "esp32/servo/control" && ledState) {
     int angulo = messageTemp.toInt();
-    // Validar rango
-    if (angulo < 0) angulo = 0;
-    if (angulo > 180) angulo = 180;
+    // Validar rango mecánico del Ackermann: [80°, 135°]
+    if (angulo < SERVO_MIN) angulo = SERVO_MIN;
+    if (angulo > SERVO_MAX) angulo = SERVO_MAX;
 
     servoDir.write(angulo);
     anguloActual = angulo;
 
-    // LEDs indicadores de dirección
-    if (angulo < 80) {
+    // LEDs indicadores de dirección (zona muerta ±3° alrededor de 113°)
+    if (angulo < SERVO_RECTO - 3) {
       // Girando a la izquierda
       digitalWrite(ledizq, HIGH);
       digitalWrite(ledder, LOW);
-    } else if (angulo > 100) {
+    } else if (angulo > SERVO_RECTO + 3) {
       // Girando a la derecha
       digitalWrite(ledder, HIGH);
       digitalWrite(ledizq, LOW);
