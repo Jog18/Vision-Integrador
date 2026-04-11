@@ -255,7 +255,7 @@ class ControlDifuso:
 # CONFIGURACIÓN
 # ============================================================
 
-BROKER = "10.91.115.191"
+BROKER = "10.108.51.191"
 PORT = 1883
 TOPIC_SERVO = "esp32/servo/control"
 
@@ -289,7 +289,7 @@ def main():
     client.connect(BROKER, PORT, 60)
     client.loop_start()
 
-    ultimo_angulo = 90
+    ultimo_angulo = 113
 
     print("Control Difuso Ackermann iniciado. ESC para salir.")
 

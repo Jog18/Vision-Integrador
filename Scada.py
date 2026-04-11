@@ -18,7 +18,9 @@ from reportlab.lib.pagesizes import letter
 import matplotlib.pyplot as plt
 
 # --- Configuracion MQTT ---
-BROKER = "10.0.0.5"
+# %%
+BROKER = "10.108.51.191"
+# %%
 PORT = 1883
 
 # --- Datos en tiempo real ---
