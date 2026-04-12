@@ -386,18 +386,29 @@ def main():
         cv2.putText(frame, etiqueta, (10, 70),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
 
-        # Barra indicadora inferior (rango [80, 135] mapeado al ancho del frame)
-        rango = SERVO_MAX - SERVO_MIN
-        barra_x = int(((angulo - SERVO_MIN) / rango) * width)
+        # Barra indicadora inferior (113 centrado en pantalla)
+        # Mitad izquierda del frame = [80, 113], mitad derecha = [113, 135]
+        mitad = width // 2
+        rango_izq = SERVO_RECTO - SERVO_MIN  # 33
+        rango_der = SERVO_MAX - SERVO_RECTO   # 22
+
+        if angulo <= SERVO_RECTO:
+            barra_x = int(((angulo - SERVO_MIN) / rango_izq) * mitad)
+        else:
+            barra_x = mitad + int(((angulo - SERVO_RECTO) / rango_der) * mitad)
+
         cv2.line(frame, (barra_x, height - 30), (barra_x, height),
                  (0, 0, 255), 3)
         cv2.line(frame, (0, height - 15), (width, height - 15),
                  (100, 100, 100), 1)
 
-        # Marcas de 80°, 113° (recto), 135° en la barra
+        # Marcas de 80, 113 (recto), 135 en la barra
         for deg, lbl in [(SERVO_MIN, "80"), (SERVO_RECTO, "113"),
                          (SERVO_MAX, "135")]:
-            px = int(((deg - SERVO_MIN) / rango) * width)
+            if deg <= SERVO_RECTO:
+                px = int(((deg - SERVO_MIN) / rango_izq) * mitad)
+            else:
+                px = mitad + int(((deg - SERVO_RECTO) / rango_der) * mitad)
             cv2.line(frame, (px, height - 25), (px, height - 5),
                      (200, 200, 200), 1)
             cv2.putText(frame, lbl, (px - 10, height - 28),

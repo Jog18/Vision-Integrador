@@ -145,7 +145,7 @@ Este archivo contiene tanto el controlador difuso como el bucle de vision. Es el
 6. **Normaliza la posicion** horizontal al rango [0, 1]: `posicion_norm = centro_x / ancho_frame`.
 7. **Ejecuta el pipeline difuso completo**: fuzzificacion (7 conjuntos) -> evaluacion de 15 reglas -> defuzzificacion por centroide.
 8. **Publica el angulo** resultante al ESP32 via MQTT (solo si el cambio es mayor a 2 grados).
-9. **Muestra HUD** con: zona central verde, deteccion del objeto, angulo del servo, etiqueta de direccion y barra indicadora inferior.
+9. **Muestra HUD** con: zona central verde, deteccion del objeto, angulo del servo, etiqueta de direccion y barra indicadora inferior (113 centrado en pantalla con mapeo no lineal).
 
 #### Clase `ControlDifuso`
 
@@ -157,6 +157,38 @@ La clase encapsula todo el sistema difuso Mamdani:
 - `calcular(posicion_norm)`: ejecuta el pipeline completo de entrada a salida.
 
 > Ver seccion 5 para el detalle completo del control difuso.
+
+---
+
+### 4.1b Seguidor de Linea (Raspberry Pi) — `ControlLinea_Raspberry.py`
+
+**Lenguaje:** Python 3
+**Dependencias:** `opencv-python`, `paho-mqtt`, `numpy`, `picamera2`
+**Ejecutar en:** Raspberry Pi 4B con camara CSI y Mosquitto local
+
+Variante del control difuso adaptada para seguir una **linea blanca sobre fondo negro** usando la Pi Camera.
+
+#### Diferencias con `ControlDifuso.py`
+
+1. **Captura de imagen:** Usa `Picamera2` (camara CSI) en vez de `cv2.VideoCapture` (webcam USB). Resolucion forzada a 640x480.
+2. **Deteccion de linea blanca** en lugar de deteccion de color azul:
+   - Convierte a escala de grises (no HSV).
+   - Aplica ROI sobre la franja inferior del frame (`ROI_PROPORCION = 0.4`, el 40% de abajo).
+   - Umbraliza con `cv2.threshold` (`UMBRAL_BLANCO = 200`).
+   - Limpia con morfologia (apertura + cierre, kernel 3x3).
+   - Toma el contorno mas grande como la linea principal y calcula su centroide con momentos.
+3. **Broker MQTT:** Apunta a `127.0.0.1` (Mosquitto corre en la misma Pi).
+4. **HUD adicional:** Muestra linea horizontal del ROI, indicador "SIN LINEA" cuando no detecta, y barra inferior con 113 centrado en pantalla.
+
+#### Constantes ajustables
+
+| Constante | Valor por defecto | Descripcion |
+|---|---|---|
+| `UMBRAL_BLANCO` | 200 | Umbral de binarizacion (0-255). Subir si hay falsos positivos, bajar si no detecta |
+| `MIN_AREA` | 300 | Area minima de contorno en px para filtrar ruido |
+| `ROI_PROPORCION` | 0.4 | Fraccion inferior del frame a analizar. Ajustar segun altura de la camara |
+
+> El controlador difuso (clase `ControlDifuso`, 15 reglas, MFs, defuzzificacion) es identico al de `ControlDifuso.py`.
 
 ---
 

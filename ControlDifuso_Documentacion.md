@@ -275,7 +275,7 @@ La ventana de visualización muestra:
 3. **Posición normalizada:** Texto junto al objeto detectado
 4. **Ángulo del servo:** Valor numérico en la esquina superior izquierda
 5. **Dirección:** Texto IZQUIERDA / CENTRO / DERECHA con código de color
-6. **Barra indicadora:** Línea roja inferior que muestra visualmente la posición del servo, con marcas en 80°, 113° y 135°
+6. **Barra indicadora:** Línea roja inferior con 113° centrado visualmente en pantalla (mapeo no lineal: mitad izquierda = [80°, 113°], mitad derecha = [113°, 135°]). Marcas en 80°, 113° y 135°
 
 ---
 
