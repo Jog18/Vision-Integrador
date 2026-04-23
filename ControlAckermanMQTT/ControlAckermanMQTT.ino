@@ -2,9 +2,9 @@
 #include <PubSubClient.h>
 #include <ESP32Servo.h>
 
-const char* ssid = "JOSUE's Galaxy A52"; //nombre de la red
-const char* password = "jog18030"; //contraseña de nuestra red
-const char* mqtt_server = "10.108.51.191"; // broker
+const char* ssid = "ARRIS-8E42"; //nombre de la red
+const char* password = "JEmOG731229"; //contraseña de nuestra red
+const char* mqtt_server = "192.168.0.8"; // broker
 
 WiFiClient espClient;
 PubSubClient client(espClient);
