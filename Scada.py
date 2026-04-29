@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 
 # --- Configuracion MQTT ---
 # %%
-BROKER = "192.168.0.8"
+BROKER = "10.249.23.191"
 # %%
 PORT = 1883
 

@@ -2,9 +2,9 @@
 #include <PubSubClient.h>
 #include <ESP32Servo.h>
 
-const char* ssid = "ARRIS-8E42"; //nombre de la red
-const char* password = "JEmOG731229"; //contraseña de nuestra red
-const char* mqtt_server = "192.168.0.8"; // broker
+const char* ssid = "A52 de Roberto"; //nombre de la red
+const char* password = "123456789"; //contraseña de nuestra red
+const char* mqtt_server = "10.249.23.191"; // broker
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -54,7 +54,7 @@ const int PWMA = 21;
 const int STBY = 22;
 const int PWM_FREQ = 1000;
 const int PWM_RESOLUTION = 8;
-const int VELOCIDAD_FIJA = 80; // PWM fijo 0-255
+const int VELOCIDAD_FIJA = 50; // PWM fijo 0-255
 
 //Leer sensores. POT
 const int pinPot1 = 34; //GPI34 para leer el pot 1
@@ -81,13 +81,20 @@ void stopMotor() {
 
 // ---------- ISR PARO DE EMERGENCIA ----------
 void IRAM_ATTR isrEmergencia() {
+  // Debounce: ignorar picos de ruido del motor (< 50ms)
+  static unsigned long ultimaISR = 0;
+  unsigned long ahora = millis();
+  if (ahora - ultimaISR < 50) return;
+  ultimaISR = ahora;
+
+  // Confirmar que el pin realmente está HIGH (no fue solo ruido)
+  if (digitalRead(PIN_ESTOP) == LOW) return;
+
   emergencia = true;
-  // Apagar LEDs y centrar servo inmediatamente
   digitalWrite(ledizq, LOW);
   digitalWrite(ledder, LOW);
   digitalWrite(PIN_LED, LOW);
   digitalWrite(PIN_LEDPARO, HIGH);
-  // Detener motor desde la ISR
   digitalWrite(AIN1, LOW);
   digitalWrite(AIN2, LOW);
 }
