@@ -123,6 +123,7 @@ def main():
         print(f"Advertencia: No se pudo conectar al broker MQTT ({e})")
 
     ultimo_angulo = SERVO_RECTO
+    ultima_posicion = 0.5  # ultima posicion conocida de la linea
     print("Seguidor de linea Ackermann (skfuzzy) iniciado. ESC para salir.")
 
     while True:
@@ -181,6 +182,7 @@ def main():
                     cy = int(M["m01"] / M["m00"])
 
                     posicion_norm = cx / width
+                    ultima_posicion = posicion_norm
 
                     # Control difuso con skfuzzy
                     angulo = calcular_angulo(simulacion, posicion_norm)
@@ -196,11 +198,21 @@ def main():
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5,
                                 (255, 255, 0), 1)
 
+        # Si pierde la linea, girar full hacia el lado donde la vio por ultima vez
+        if not linea_detectada:
+            if ultima_posicion < 0.5:
+                angulo = float(SERVO_MIN)  # linea se perdio a la izquierda -> full izquierda
+            else:
+                angulo = float(SERVO_MAX)  # linea se perdio a la derecha -> full derecha
+
         # Enviar al servo si el cambio es significativo
-        if linea_detectada and abs(angulo - ultimo_angulo) > 2:
+        if abs(angulo - ultimo_angulo) > 2:
             angulo_enviado = enviar_angulo_servo(client, angulo)
             ultimo_angulo = angulo
-            print(f"Servo -> {angulo_enviado} deg  |  Pos: {posicion_norm:.2f}")
+            if linea_detectada:
+                print(f"Servo -> {angulo_enviado} deg  |  Pos: {posicion_norm:.2f}")
+            else:
+                print(f"Servo -> {angulo_enviado} deg  |  BUSCANDO LINEA")
 
         # --- HUD ---
         angulo_int = int(round(angulo))

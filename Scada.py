@@ -19,24 +19,24 @@ import matplotlib.pyplot as plt
 
 # --- Configuracion MQTT ---
 # %%
-BROKER = "10.249.23.191"
+BROKER = "10.184.97.191"
 # %%
 PORT = 1883
 
 # --- Datos en tiempo real ---
 MAX_PUNTOS = 60  # 60 segundos de historial en la grafica
 datos_temp = deque(maxlen=MAX_PUNTOS)
-voltaje_pot = 0.0
+porcentaje_bat = 0.0
 temperatura_actual = 0.0
 estado_agv = "PARO"  # PARO, MOVIMIENTO, EMERGENCIA
 
 # --- Flags de alertas (para no repetir messagebox) ---
 alerta_temp_mostrada = False
-alerta_pot_mostrada = False
+alerta_bat_mostrada = False
 
 # --- Registro de eventos CSV ---
 ARCHIVO_EVENTOS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "eventos.csv")
-ENCABEZADOS_CSV = ["Fecha", "Hora", "arranque/paro", "Origen", "LM35/uno", "pot/uno"]
+ENCABEZADOS_CSV = ["Fecha", "Hora", "arranque/paro", "Origen", "LM35/uno", "bateria/%"]
 
 # Flag para saber si el ultimo comando fue enviado desde la interfaz
 origen_ultimo_comando = None  # "VIRTUAL" o None
@@ -49,7 +49,7 @@ def inicializar_csv():
             writer.writerow(ENCABEZADOS_CSV)
 
 
-def registrar_evento(evento, origen, temp, volt):
+def registrar_evento(evento, origen, temp, bat):
     ahora = datetime.now()
     fila = [
         ahora.strftime("%Y-%m-%d"),
@@ -57,7 +57,7 @@ def registrar_evento(evento, origen, temp, volt):
         evento,
         origen,
         f"{temp:.1f}",
-        f"{volt:.3f}"
+        f"{bat:.1f}"
     ]
     with open(ARCHIVO_EVENTOS, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -89,12 +89,12 @@ def generar_grafica_temperatura():
 def on_connect(client, userdata, flags, rc):
     client.subscribe("arranque/paro")
     client.subscribe("LM35/uno")
-    client.subscribe("pot/uno")
+    client.subscribe("bateria/porcentaje")
 
 
 def on_message(client, userdata, msg):
-    global voltaje_pot, temperatura_actual, estado_agv
-    global alerta_temp_mostrada, alerta_pot_mostrada
+    global porcentaje_bat, temperatura_actual, estado_agv
+    global alerta_temp_mostrada, alerta_bat_mostrada
     global origen_ultimo_comando
 
     topic = msg.topic
@@ -110,7 +110,7 @@ def on_message(client, userdata, msg):
                 origen = "FISICA"
 
             estado_agv = payload
-            registrar_evento(payload, origen, temperatura_actual, voltaje_pot)
+            registrar_evento(payload, origen, temperatura_actual, porcentaje_bat)
 
     elif topic == "LM35/uno":
         try:
@@ -121,25 +121,25 @@ def on_message(client, userdata, msg):
             if temperatura_actual > 40 and not alerta_temp_mostrada:
                 alerta_temp_mostrada = True
                 registrar_evento("ALERTA_TEMP", "SENSOR",
-                                 temperatura_actual, voltaje_pot)
+                                 temperatura_actual, porcentaje_bat)
                 root.after(0, lambda: mostrar_alerta_temp(temperatura_actual))
             elif temperatura_actual <= 40:
                 alerta_temp_mostrada = False
         except ValueError:
             pass
 
-    elif topic == "pot/uno":
+    elif topic == "bateria/porcentaje":
         try:
-            voltaje_pot = float(payload)
+            porcentaje_bat = float(payload)
 
-            # Alerta pot < 0.5V
-            if voltaje_pot < 0.5 and not alerta_pot_mostrada:
-                alerta_pot_mostrada = True
-                registrar_evento("ALERTA_POT", "SENSOR",
-                                 temperatura_actual, voltaje_pot)
-                root.after(0, lambda: mostrar_alerta_pot(voltaje_pot))
-            elif voltaje_pot >= 0.5:
-                alerta_pot_mostrada = False
+            # Alerta bateria < 20%
+            if porcentaje_bat < 20 and not alerta_bat_mostrada:
+                alerta_bat_mostrada = True
+                registrar_evento("ALERTA_BAT", "SENSOR",
+                                 temperatura_actual, porcentaje_bat)
+                root.after(0, lambda: mostrar_alerta_bat(porcentaje_bat))
+            elif porcentaje_bat >= 20:
+                alerta_bat_mostrada = False
         except ValueError:
             pass
 
@@ -149,9 +149,9 @@ def mostrar_alerta_temp(temp):
                            f"Temperatura critica: {temp:.1f} C\nSupera el limite de 40 C")
 
 
-def mostrar_alerta_pot(volt):
-    messagebox.showwarning("Alerta Potenciometro",
-                           f"Voltaje bajo: {volt:.3f} V\nPor debajo del limite de 0.5 V")
+def mostrar_alerta_bat(porcentaje):
+    messagebox.showwarning("Alerta Bateria",
+                           f"Bateria baja: {porcentaje:.1f}%\nPor debajo del limite de 20%")
 
 
 # Conectar MQTT
@@ -344,31 +344,32 @@ btn_reporte = tk.Button(btn_frame, text="GENERAR REPORTE",
                         width=12, height=2)
 btn_reporte.pack(pady=5)
 
-# --- Barra potenciometro ---
-frame_pot = tk.LabelFrame(frame_izq, text=" Potenciometro ",
+# --- Barra bateria ---
+frame_bat = tk.LabelFrame(frame_izq, text=" Bateria ",
                           bg=COLOR_PANEL, fg=COLOR_TEXTO,
                           font=("Consolas", 11, "bold"),
                           bd=2, relief=tk.GROOVE)
-frame_pot.pack(fill=tk.X, pady=(0, 10))
+frame_bat.pack(fill=tk.X, pady=(0, 10))
 
-lbl_pot_val = tk.Label(frame_pot, text="0.000 V", bg=COLOR_PANEL,
+lbl_bat_val = tk.Label(frame_bat, text="0.0 %", bg=COLOR_PANEL,
                        fg="#00ccff", font=("Consolas", 16, "bold"))
-lbl_pot_val.pack(pady=(10, 0))
+lbl_bat_val.pack(pady=(10, 0))
 
-canvas_pot = tk.Canvas(frame_pot, width=280, height=35,
+canvas_bat = tk.Canvas(frame_bat, width=280, height=35,
                        bg="#111111", highlightthickness=1,
                        highlightbackground=COLOR_BORDE)
-canvas_pot.pack(pady=10, padx=10)
+canvas_bat.pack(pady=10, padx=10)
 
 # Borde de la barra
-canvas_pot.create_rectangle(2, 2, 278, 33, outline="#555", width=1)
+canvas_bat.create_rectangle(2, 2, 278, 33, outline="#555", width=1)
 
 # Barra de nivel (se actualiza)
-barra_pot = canvas_pot.create_rectangle(3, 3, 3, 32, fill="#00ccff", outline="")
+barra_bat = canvas_bat.create_rectangle(3, 3, 3, 32, fill="#00ccff", outline="")
 
 # Marcas de referencia
-canvas_pot.create_line(42, 2, 42, 33, fill="#555", dash=(2, 2))  # 0.5V
-canvas_pot.create_text(42, 33, text="0.5", fill="#777", font=("Consolas", 7), anchor=tk.N)
+marca_20 = int(3 + (20 / 100) * 275)
+canvas_bat.create_line(marca_20, 2, marca_20, 33, fill="#555", dash=(2, 2))  # 20%
+canvas_bat.create_text(marca_20, 33, text="20%", fill="#777", font=("Consolas", 7), anchor=tk.N)
 
 
 # ==================== COLUMNA DERECHA ====================
@@ -427,18 +428,20 @@ def actualizar_interfaz():
         canvas_emg.itemconfig(foco_emg, fill=color_emg_on)
         lbl_estado.config(text="Estado: EMERGENCIA", fg="#ffcc00")
 
-    # --- Barra potenciometro ---
-    lbl_pot_val.config(text=f"{voltaje_pot:.3f} V")
-    ancho_barra = int((voltaje_pot / 3.3) * 275)
+    # --- Barra bateria ---
+    lbl_bat_val.config(text=f"{porcentaje_bat:.1f} %")
+    ancho_barra = int((porcentaje_bat / 100.0) * 275)
     ancho_barra = max(0, min(275, ancho_barra))
 
-    if voltaje_pot < 0.5:
+    if porcentaje_bat < 20:
         color_barra = "#ff3333"
+    elif porcentaje_bat < 50:
+        color_barra = "#ffcc00"
     else:
         color_barra = "#00ccff"
-    canvas_pot.coords(barra_pot, 3, 3, 3 + ancho_barra, 32)
-    canvas_pot.itemconfig(barra_pot, fill=color_barra)
-    lbl_pot_val.config(fg=color_barra)
+    canvas_bat.coords(barra_bat, 3, 3, 3 + ancho_barra, 32)
+    canvas_bat.itemconfig(barra_bat, fill=color_barra)
+    lbl_bat_val.config(fg=color_barra)
 
     # --- Valor temperatura ---
     if temperatura_actual > 40:

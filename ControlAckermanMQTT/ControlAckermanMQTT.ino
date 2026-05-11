@@ -2,9 +2,9 @@
 #include <PubSubClient.h>
 #include <ESP32Servo.h>
 
-const char* ssid = "A52 de Roberto"; //nombre de la red
-const char* password = "123456789"; //contraseña de nuestra red
-const char* mqtt_server = "10.249.23.191"; // broker
+const char* ssid = "JOSUE's Galaxy A52"; //nombre de la red
+const char* password = "jog18030"; //contraseña de nuestra red
+const char* mqtt_server = "10.184.97.191"; // broker
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -56,10 +56,12 @@ const int PWM_FREQ = 1000;
 const int PWM_RESOLUTION = 8;
 const int VELOCIDAD_FIJA = 50; // PWM fijo 0-255
 
-//Leer sensores. POT
-const int pinPot1 = 34; //GPI34 para leer el pot 1
-int valorADCpot1 = 0; //variable para almacenar la lectura del ADC
-float voltaje1 = 0.0; // variable para guardar el voltaje equivalente
+//Leer sensores. BATERIA
+const int pinBateria = 34; // GPI34 para leer voltaje de bateria (antes pot)
+const float voltajeMaxBat = 12.6; // Voltaje maximo bateria 12V Li-ion (3 celdas)
+const float voltajeMinBat = 9.0;  // Voltaje minimo seguro
+const float factorDivisor = 5.0;  // Factor del divisor de voltaje (30k + 7.5k) / 7.5k = 5.0
+float porcentajeBat = 0.0; // porcentaje de bateria 0-100
 //LM35
 const int pinLM35 = 36;//GPI36 para leer LM35
 int adcTemp = 0;// //variable para almacenar el valor del ADC del LM35
@@ -188,9 +190,17 @@ void loop() {
 
   startStop();
 
-  //POTENCIOMETRO1
-  valorADCpot1 = analogRead(pinPot1); //leemos el ADC del pot1
-  voltaje1 = (valorADCpot1 * 3.3) / 4095.0; // Convertir a voltaje 0 - 3.3
+  //BATERIA - promedio de 20 lecturas para estabilidad
+  long sumaADC = 0;
+  for (int i = 0; i < 20; i++) {
+    sumaADC += analogRead(pinBateria);
+    delayMicroseconds(500);
+  }
+  float promedioADC = sumaADC / 20.0;
+  float voltajePin = promedioADC * (3.3 / 4095.0);
+  float voltajeBateria = voltajePin * factorDivisor;
+  porcentajeBat = (voltajeBateria - voltajeMinBat) / (voltajeMaxBat - voltajeMinBat) * 100.0;
+  porcentajeBat = constrain(porcentajeBat, 0.0, 100.0);
 
   //LM35
   adcTemp = analogRead(pinLM35); // lectura del ADC DE LM35
@@ -222,10 +232,10 @@ void loop() {
   long now = millis();
   if (now - lastMsg > 1000) {
     lastMsg = now;
-    //enviar datos pot
-    char vol1[10]; //variable tipo caracter a enviar por MQTT
-    dtostrf(voltaje1, 1, 3, vol1); //convertimos el valor de voltaje a tipo char para que se pueda enviar a mosquitto
-    client.publish("pot/uno", vol1); // mandamos la variable "mensaje"  al topic "pot/uno"
+    //enviar datos bateria
+    char bat[10]; //variable tipo caracter a enviar por MQTT
+    dtostrf(porcentajeBat, 1, 1, bat); //convertimos el porcentaje a tipo char para enviar por MQTT
+    client.publish("bateria/porcentaje", bat); // mandamos el porcentaje al topic "bateria/porcentaje"
 
     //enviar datos LM35
     char temp[10]; //variable tipo caracter a enviar por MQTT
