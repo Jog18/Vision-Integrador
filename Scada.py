@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 
 # --- Configuracion MQTT ---
 # %%
-BROKER = "10.184.97.191"
+BROKER = "10.91.15.191"
 # %%
 PORT = 1883
 
@@ -137,7 +137,7 @@ def on_message(client, userdata, msg):
                 alerta_bat_mostrada = True
                 registrar_evento("ALERTA_BAT", "SENSOR",
                                  temperatura_actual, porcentaje_bat)
-                root.after(0, lambda: mostrar_alerta_bat(porcentaje_bat))
+         ##       root.after(0, lambda: mostrar_alerta_bat(porcentaje_bat))
             elif porcentaje_bat >= 20:
                 alerta_bat_mostrada = False
         except ValueError:
@@ -149,9 +149,9 @@ def mostrar_alerta_temp(temp):
                            f"Temperatura critica: {temp:.1f} C\nSupera el limite de 40 C")
 
 
-def mostrar_alerta_bat(porcentaje):
-    messagebox.showwarning("Alerta Bateria",
-                           f"Bateria baja: {porcentaje:.1f}%\nPor debajo del limite de 20%")
+##def mostrar_alerta_bat(porcentaje):
+  ##  messagebox.showwarning("Alerta Bateria",
+    ##                       f"Bateria baja: {porcentaje:.1f}%\nPor debajo del limite de 20%")
 
 
 # Conectar MQTT

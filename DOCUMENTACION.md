@@ -1,7 +1,7 @@
 # Vision-Integrador — Documentacion del Proyecto
 
 > **Estado:** Prototipo funcional
-> **Version:** 4.0
+> **Version:** 5.0
 > **Autor:** Josue (im221466@itsatlixco.edu.mx)
 > **Fecha de inicio:** Marzo 2026
 
@@ -13,9 +13,11 @@
 2. [Para que sirve](#2-para-que-sirve)
 3. [Arquitectura general](#3-arquitectura-general)
 4. [Componentes del sistema](#4-componentes-del-sistema)
-   - [4.1 Control Difuso + Vision](#41-control-difuso--vision-controldifusopy)
-   - [4.2 Interfaz SCADA](#42-interfaz-scada-scadapy)
-   - [4.3 Firmware ESP32 Ackermann](#43-firmware-esp32-ackermann-esp32esp32_ackermannino)
+   - [4.1 Seguidor de Linea (skfuzzy)](#41-seguidor-de-linea-skfuzzy--controllinea_skfuzzypy)
+   - [4.2 Demo en PC](#42-demo-en-pc--controllinea_pc_demopy)
+   - [4.3 Interfaz SCADA](#43-interfaz-scada-scadapy)
+   - [4.4 Firmware ESP32 Ackermann](#44-firmware-esp32-ackermann-controlackermanmqttcontrolackermanmqttino)
+   - [4.5 Lector de Bateria](#45-lector-de-bateria--lectorbaterialectorbateriaino)
 5. [Control Difuso — Detalle completo](#5-control-difuso--detalle-completo)
    - [5.1 Variable de entrada](#51-variable-de-entrada)
    - [5.2 Conjuntos difusos de entrada (7)](#52-conjuntos-difusos-de-entrada-7)
@@ -23,10 +25,10 @@
    - [5.4 Conjuntos difusos de salida (7)](#54-conjuntos-difusos-de-salida-7)
    - [5.5 Funciones de membresia](#55-funciones-de-membresia)
    - [5.6 Fuzzificacion](#56-fuzzificacion)
-   - [5.7 Base de reglas (15 reglas)](#57-base-de-reglas-15-reglas)
+   - [5.7 Base de reglas (7 reglas)](#57-base-de-reglas-7-reglas)
    - [5.8 Inferencia Mamdani](#58-inferencia-mamdani)
    - [5.9 Defuzzificacion — Centro de Gravedad](#59-defuzzificacion--centro-de-gravedad)
-   - [5.10 Ejemplo de funcionamiento](#510-ejemplo-de-funcionamiento)
+   - [5.10 Comportamiento al perder la linea](#510-comportamiento-al-perder-la-linea)
 6. [Sistema de paro de emergencia (E-Stop)](#6-sistema-de-paro-de-emergencia-e-stop)
 7. [Registro de eventos (CSV) y reportes PDF](#7-registro-de-eventos-csv-y-reportes-pdf)
 8. [Tecnologias utilizadas](#8-tecnologias-utilizadas)
@@ -45,15 +47,18 @@
 **Vision-Integrador** es un sistema de control para un AGV (Automated Guided Vehicle) a escala 1:10 con direccion **Ackermann** que integra:
 
 - **Vision artificial** en tiempo real (procesada en Raspberry Pi 4B con OpenCV).
-- **Control difuso tipo Mamdani** con 7 conjuntos de entrada, 7 de salida y 15 reglas para calcular el angulo del servo de direccion de forma continua y suave.
+- **Control difuso tipo Mamdani** implementado con scikit-fuzzy (skfuzzy), con 7 conjuntos de entrada, 7 de salida y 7 reglas para calcular el angulo del servo de direccion de forma continua y suave.
+- **Seguimiento de linea blanca** sobre fondo negro usando Picamera2, con ROI configurable y deteccion por umbral + contornos.
+- **Recuperacion al perder la linea**: al perder la linea, el servo gira al maximo hacia el lado donde la vio por ultima vez para intentar reencontrarla.
 - **Comunicacion inalambrica** mediante protocolo MQTT (broker Mosquitto en Raspberry Pi).
-- **Control de hardware** a traves de un microcontrolador ESP32 con servo de direccion.
-- **Lectura de sensores** (potenciometro y sensor de temperatura LM35).
+- **Control de hardware** a traves de un microcontrolador ESP32 con servo de direccion y motor DC (TB6612FNG).
+- **Monitoreo de bateria** con divisor de voltaje (30kΩ / 7.5kΩ) para bateria Li-ion 12V, publicando porcentaje (0-100%) via MQTT.
+- **Lectura de temperatura** con sensor LM35.
 - **Sistema de arranque/paro/emergencia** dual (fisico + virtual).
-- **Interfaz SCADA** con focos de estado, grafica de temperatura, barra de potenciometro, botones de control y generacion de reportes PDF.
+- **Interfaz SCADA** con focos de estado, grafica de temperatura, barra de nivel de bateria, botones de control y generacion de reportes PDF.
 - **Registro de eventos** en archivo CSV con trazabilidad completa.
 
-El sistema detecta un objeto azul con la camara, normaliza su posicion horizontal en el frame [0, 1], y el controlador difuso calcula un angulo de servo continuo [0, 180] grados que se envia al ESP32 via MQTT para dirigir el vehiculo.
+El sistema detecta una linea blanca con la camara, normaliza su posicion horizontal en el frame [0, 1], y el controlador difuso calcula un angulo de servo continuo [80, 135] grados que se envia al ESP32 via MQTT para dirigir el vehiculo.
 
 ---
 
@@ -61,9 +66,9 @@ El sistema detecta un objeto azul con la camara, normaliza su posicion horizonta
 
 | Aplicacion | Descripcion |
 |---|---|
-| AGV con direccion Ackermann | Vehiculo que sigue un objeto azul con control difuso de direccion |
-| Control difuso aplicado | Implementacion completa del metodo Mamdani con defuzzificacion por centroide |
-| Automatizacion y SCADA | Monitoreo en tiempo real con interfaz grafica, alertas y reportes |
+| AGV con direccion Ackermann | Vehiculo que sigue una linea blanca con control difuso de direccion |
+| Control difuso aplicado | Implementacion del metodo Mamdani con scikit-fuzzy y defuzzificacion por centroide |
+| Automatizacion y SCADA | Monitoreo en tiempo real con interfaz grafica, alertas, nivel de bateria y reportes |
 | Educacion | Integracion de vision artificial + logica difusa + IoT + microcontroladores |
 
 ---
@@ -75,11 +80,12 @@ El sistema detecta un objeto azul con la camara, normaliza su posicion horizonta
 |                      RASPBERRY PI 4B                            |
 |                                                                 |
 |   +-------------+      +-----------------------------------+   |
-|   | Camara USB  | ---> | ControlDifuso.py                  |   |
-|   | /dev/video0 |      | - Deteccion de objeto azul (HSV)  |   |
-|   +-------------+      | - Normalizacion de posicion [0,1]  |   |
-|                         | - Control difuso Mamdani (7 MFs)  |   |
-|                         | - Calcula angulo servo [0, 180]   |   |
+|   | Camara CSI  | ---> | ControlLinea_skfuzzy.py            |   |
+|   | Picamera2   |      | - Deteccion de linea blanca       |   |
+|   +-------------+      | - ROI inferior (40% del frame)     |   |
+|                         | - Control difuso Mamdani (skfuzzy)|   |
+|                         | - Calcula angulo servo [80, 135]  |   |
+|                         | - Busqueda al perder linea        |   |
 |                         | - Publica angulo via MQTT         |   |
 |                         +----------------+------------------+   |
 |                                          |                      |
@@ -88,8 +94,8 @@ El sistema detecta un objeto azul con la camara, normaliza su posicion horizonta
 |   | - 3 focos: PARO / MOVIMIENTO / EMERGENCIA               |   |
 |   | - Botones: ARRANQUE / PARO / E-STOP / RESET / REPORTE  |   |
 |   | - Grafica de temperatura en tiempo real (60s)           |   |
-|   | - Barra de potenciometro (0-3.3V)                       |   |
-|   | - Alertas: temp > 40C, voltaje < 0.5V                   |   |
+|   | - Barra de nivel de bateria (0-100%)                    |   |
+|   | - Alertas: temp > 40C, bateria < 20%                    |   |
 |   | - Registro CSV + Reportes PDF                           |   |
 |   +--------------------------------------+------------------+   |
 |                                          |                      |
@@ -109,17 +115,17 @@ El sistema detecta un objeto azul con la camara, normaliza su posicion horizonta
                          |    EMERGENCIA, RESET_E...    |
                          |    (esp32/arranque)          |
                          |  Publica: temperatura,       |
-                         |    voltaje, estado            |
+                         |    bateria %, estado         |
                          |                              |
                          |  GPIO 5  -- Servo direccion  |
                          |  GPIO 16 -- LED Izquierdo    |
                          |  GPIO 15 -- LED Derecho      |
                          |  GPIO 2  -- LED Estado (ON)  |
                          |  GPIO 23 -- LED Estado (PARO)|
-                         |  GPIO 18 -- Boton Encender   |
+                         |  GPIO 12 -- Boton Encender   |
                          |  GPIO 4  -- Boton Apagar     |
                          |  GPIO 13 -- E-Stop (NC)      |
-                         |  GPIO 34 -- Potenciometro    |
+                         |  GPIO 34 -- Bateria (ADC)    |
                          |  GPIO 36 -- Sensor LM35      |
                          +------------------------------+
 ```
@@ -128,57 +134,27 @@ El sistema detecta un objeto azul con la camara, normaliza su posicion horizonta
 
 ## 4. Componentes del sistema
 
-### 4.1 Control Difuso + Vision — `ControlDifuso.py`
+### 4.1 Seguidor de Linea (skfuzzy) — `ControlLinea_skfuzzy.py`
 
 **Lenguaje:** Python 3
-**Dependencias:** `opencv-python`, `paho-mqtt`, `numpy`
+**Dependencias:** `opencv-python`, `numpy`, `scikit-fuzzy`, `scipy`, `networkx`, `paho-mqtt`, `picamera2`
+**Ejecutar en:** Raspberry Pi 4B con camara CSI y Mosquitto local
 
-Este archivo contiene tanto el controlador difuso como el bucle de vision. Es el componente central del sistema.
+Archivo principal del sistema. Contiene el controlador difuso (via scikit-fuzzy) y el bucle de vision para seguir una linea blanca.
 
 #### Que hace
 
-1. **Captura video** desde la camara conectada.
-2. **Convierte** cada fotograma de BGR a HSV.
-3. **Aplica mascara** de color para aislar pixeles azules (H: 100-140, S: 150-255, V: 0-255).
-4. **Detecta contornos** y descarta los de area menor a 500 px.
-5. **Calcula el centroide** del objeto azul.
-6. **Normaliza la posicion** horizontal al rango [0, 1]: `posicion_norm = centro_x / ancho_frame`.
-7. **Ejecuta el pipeline difuso completo**: fuzzificacion (7 conjuntos) -> evaluacion de 15 reglas -> defuzzificacion por centroide.
-8. **Publica el angulo** resultante al ESP32 via MQTT (solo si el cambio es mayor a 2 grados).
-9. **Muestra HUD** con: zona central verde, deteccion del objeto, angulo del servo, etiqueta de direccion y barra indicadora inferior (113 centrado en pantalla con mapeo no lineal).
-
-#### Clase `ControlDifuso`
-
-La clase encapsula todo el sistema difuso Mamdani:
-- `__init__()`: define los 7 conjuntos de entrada, 7 de salida y pre-calcula las MFs.
-- `fuzzificar(pos)`: evalua la posicion contra los 7 conjuntos de entrada.
-- `evaluar_reglas(...)`: aplica las 15 reglas y calcula activaciones por conjunto de salida.
-- `defuzzificar(activaciones)`: recorta, agrega y calcula centroide.
-- `calcular(posicion_norm)`: ejecuta el pipeline completo de entrada a salida.
-
-> Ver seccion 5 para el detalle completo del control difuso.
-
----
-
-### 4.1b Seguidor de Linea (Raspberry Pi) — `ControlLinea_Raspberry.py`
-
-**Lenguaje:** Python 3
-**Dependencias:** `opencv-python`, `paho-mqtt`, `numpy`, `picamera2`
-**Ejecutar en:** Raspberry Pi 4B con camara CSI y Mosquitto local
-
-Variante del control difuso adaptada para seguir una **linea blanca sobre fondo negro** usando la Pi Camera.
-
-#### Diferencias con `ControlDifuso.py`
-
-1. **Captura de imagen:** Usa `Picamera2` (camara CSI) en vez de `cv2.VideoCapture` (webcam USB). Resolucion forzada a 640x480.
-2. **Deteccion de linea blanca** en lugar de deteccion de color azul:
-   - Convierte a escala de grises (no HSV).
-   - Aplica ROI sobre la franja inferior del frame (`ROI_PROPORCION = 0.4`, el 40% de abajo).
-   - Umbraliza con `cv2.threshold` (`UMBRAL_BLANCO = 200`).
-   - Limpia con morfologia (apertura + cierre, kernel 3x3).
-   - Toma el contorno mas grande como la linea principal y calcula su centroide con momentos.
-3. **Broker MQTT:** Apunta a `127.0.0.1` (Mosquitto corre en la misma Pi).
-4. **HUD adicional:** Muestra linea horizontal del ROI, indicador "SIN LINEA" cuando no detecta, y barra inferior con 113 centrado en pantalla.
+1. **Crea el sistema difuso** con scikit-fuzzy: 7 conjuntos de entrada, 7 de salida, 7 reglas directas, defuzzificacion por centroide.
+2. **Captura video** desde la camara CSI con Picamera2 a 640x480.
+3. **Convierte** cada fotograma a escala de grises.
+4. **Aplica ROI** sobre la franja inferior del frame (`ROI_PROPORCION = 0.4`, el 40% de abajo).
+5. **Umbraliza** con `cv2.threshold` (`UMBRAL_BLANCO = 200`) y limpia con morfologia (apertura + cierre).
+6. **Detecta contornos** y toma el mas grande como la linea principal (descarta area < 300 px).
+7. **Calcula el centroide** con momentos y **normaliza la posicion** horizontal al rango [0, 1].
+8. **Ejecuta el pipeline difuso**: fuzzificacion -> 7 reglas -> defuzzificacion por centroide.
+9. **Al perder la linea**: gira el servo al maximo hacia el lado donde la vio por ultima vez (busqueda activa).
+10. **Publica el angulo** resultante al ESP32 via MQTT (solo si el cambio es mayor a 2 grados).
+11. **Muestra HUD** con: zona central verde, contorno de la linea, centroide, angulo del servo, etiqueta de direccion y barra indicadora inferior.
 
 #### Constantes ajustables
 
@@ -188,11 +164,24 @@ Variante del control difuso adaptada para seguir una **linea blanca sobre fondo 
 | `MIN_AREA` | 300 | Area minima de contorno en px para filtrar ruido |
 | `ROI_PROPORCION` | 0.4 | Fraccion inferior del frame a analizar. Ajustar segun altura de la camara |
 
-> El controlador difuso (clase `ControlDifuso`, 15 reglas, MFs, defuzzificacion) es identico al de `ControlDifuso.py`.
+> Ver seccion 5 para el detalle completo del control difuso.
 
 ---
 
-### 4.2 Interfaz SCADA — `Scada.py`
+### 4.2 Demo en PC — `ControlLinea_PC_Demo.py`
+
+**Lenguaje:** Python 3
+**Dependencias:** `opencv-python`, `numpy`, `scikit-fuzzy`
+**Ejecutar en:** PC con webcam USB
+
+Version de demostración que corre en PC sin hardware. Misma logica de deteccion y control difuso, pero:
+- Usa `cv2.VideoCapture(0)` (webcam USB) en vez de Picamera2.
+- **No usa MQTT** (no envia comandos al ESP32).
+- Incluye un **panel de visualizacion del control difuso** en tiempo real que muestra: funciones de membresia de entrada/salida con activaciones, barras de activacion de las 7 reglas y resumen numerico.
+
+---
+
+### 4.3 Interfaz SCADA — `Scada.py`
 
 **Lenguaje:** Python 3
 **Dependencias:** `tkinter`, `paho-mqtt`, `reportlab`, `matplotlib`
@@ -220,14 +209,14 @@ Panel de control y monitoreo con tema oscuro.
    - Linea roja de alerta en 40 C.
    - Punto indicador en el ultimo valor.
 
-4. **Barra de nivel del potenciometro:**
-   - Representacion visual de 0 a 3.3V.
-   - Marca de referencia en 0.5V.
-   - Cambia a rojo cuando el voltaje baja de 0.5V.
+4. **Barra de nivel de bateria:**
+   - Representacion visual de 0 a 100%.
+   - Marca de referencia en 20%.
+   - Colores: rojo < 20%, amarillo 20-50%, cyan > 50%.
 
 5. **Sistema de alertas:**
    - Temperatura > 40 C: alerta de temperatura critica.
-   - Potenciometro < 0.5V: alerta de voltaje bajo.
+   - Bateria < 20%: alerta de bateria baja.
    - Solo se muestra una vez hasta que el valor vuelva a rango normal.
    - Las alertas se registran en el CSV.
 
@@ -238,12 +227,12 @@ Panel de control y monitoreo con tema oscuro.
 
 ---
 
-### 4.3 Firmware ESP32 Ackermann — `esp32/esp32_ackermann.ino`
+### 4.4 Firmware ESP32 Ackermann — `ControlAckermanMQTT/ControlAckermanMQTT.ino`
 
 **Lenguaje:** C++ (Arduino)
 **Librerias:** `WiFi.h`, `PubSubClient.h`, `ESP32Servo.h`
 
-Firmware del microcontrolador que controla el servo de direccion Ackermann.
+Firmware del microcontrolador que controla el servo de direccion Ackermann y el motor DC.
 
 #### Que hace
 
@@ -253,31 +242,39 @@ Firmware del microcontrolador que controla el servo de direccion Ackermann.
    - Recibe angulos continuos (80-135) del controlador difuso.
    - Valida rango mecanico del Ackermann y escribe al servo.
    - Posicion inicial y por defecto: 113 grados (recto).
-4. **LEDs indicadores de direccion** (zona muerta +-3 grados alrededor de 113):
+4. **Motor DC** via driver TB6612FNG (PWM fijo = 50, 0-255).
+5. **LEDs indicadores de direccion** (zona muerta +-3 grados alrededor de 113):
    - Angulo < 110: LED izquierdo encendido (GPIO 16).
    - Angulo > 116: LED derecho encendido (GPIO 15).
    - 110-116: ambos LEDs encendidos (recto).
-5. **Sistema de arranque/paro** con tres modos:
-   - **Botones fisicos**: ON (GPIO 18) y OFF (GPIO 4) con debounce de 50ms.
+6. **Sistema de arranque/paro** con tres modos:
+   - **Botones fisicos**: ON (GPIO 12) y OFF (GPIO 4) con debounce de 50ms.
    - **Comandos MQTT**: `"GO"`, `"STOP"`, `"EMERGENCIA"`, `"RESET_EMERGENCIA"`.
-   - **E-Stop fisico**: Boton NC en GPIO 13 con interrupcion de hardware.
-6. **Lectura de sensores** cada segundo: potenciometro (GPIO 34) y LM35 (GPIO 36).
-7. **Publica estado** (`"MOVIMIENTO"`, `"PARO"`, `"EMERGENCIA"`) solo cuando cambia.
-8. **Reconexion automatica** WiFi y MQTT.
+   - **E-Stop fisico**: Boton NC en GPIO 13 con interrupcion de hardware y debounce en ISR.
+7. **Lectura de bateria** cada segundo (GPIO 34): promedio de 20 muestras ADC, divisor de voltaje (30kΩ / 7.5kΩ, factor 5.0), calcula porcentaje (0-100%) y publica en `bateria/porcentaje`.
+8. **Lectura de temperatura** cada segundo: sensor LM35 (GPIO 36), publica en `LM35/uno`.
+9. **Publica estado** (`"MOVIMIENTO"`, `"PARO"`, `"EMERGENCIA"`) solo cuando cambia.
+10. **Reconexion automatica** WiFi y MQTT.
 
-> **Nota:** El archivo `esp32/esp32.ino` contiene el firmware legacy del control diferencial (dos motores DC) y no se usa en la configuracion actual.
+---
+
+### 4.5 Lector de Bateria — `LectorBateria/LectorBateria.ino`
+
+**Lenguaje:** C++ (Arduino)
+
+Utilidad independiente para probar la lectura de voltaje de la bateria por serial. Lee el ADC en GPIO 34, promedia 20 muestras, aplica el factor del divisor de voltaje (5.0) y muestra voltaje y porcentaje por Serial Monitor cada 5 segundos.
 
 ---
 
 ## 5. Control Difuso — Detalle completo
 
-El sistema implementa un **controlador difuso tipo Mamdani** completo con las siguientes etapas:
+El sistema implementa un **controlador difuso tipo Mamdani** usando la libreria scikit-fuzzy (skfuzzy) con las siguientes etapas:
 
 ```
 Posicion normalizada [0,1] --> Fuzzificacion (7 MFs)
                                       |
                                       v
-                              Evaluacion de 15 reglas
+                              Evaluacion de 7 reglas
                                       |
                                       v
                               Inferencia (recorte + agregacion)
@@ -286,7 +283,7 @@ Posicion normalizada [0,1] --> Fuzzificacion (7 MFs)
                               Defuzzificacion (centroide)
                                       |
                                       v
-                              Angulo del servo [0, 180]
+                              Angulo del servo [80, 135]
 ```
 
 ### 5.1 Variable de entrada
@@ -436,82 +433,33 @@ mu_med_der  = trimf(pos, [0.65, 0.80, 0.95])
 mu_muy_der  = trapmf(pos, [0.80, 0.95, 1.0, 1.0])
 ```
 
-### 5.7 Base de reglas (15 reglas)
+### 5.7 Base de reglas (7 reglas)
 
-Las reglas utilizan los operadores:
-- **AND** -> operador minimo: `min(uA, uB)`
-- **NOT** -> complemento: `1 - uA`
-- **OR** (agregacion de reglas con mismo consecuente) -> operador maximo: `max(ri, rj)`
+El sistema usa 7 reglas directas implementadas con `skfuzzy.control.Rule`. Cada conjunto de entrada mapea directamente a su conjunto de salida correspondiente:
 
-#### Tabla completa de reglas
+| # | Regla | Proposito |
+|---|-------|-----------|
+| **R1** | IF posicion = Muy_Izquierda THEN servo = Muy_Izquierda | Linea en extremo izquierdo -> giro maximo izquierdo (80°) |
+| **R2** | IF posicion = Med_Izquierda THEN servo = Med_Izquierda | Linea a la izquierda -> giro medio izquierdo (91°) |
+| **R3** | IF posicion = Poco_Izquierda THEN servo = Poco_Izquierda | Linea ligeramente a la izquierda -> correccion leve (102°) |
+| **R4** | IF posicion = Centro THEN servo = Centro | Linea centrada -> mantener recto (113°) |
+| **R5** | IF posicion = Poco_Derecha THEN servo = Poco_Derecha | Linea ligeramente a la derecha -> correccion leve (120°) |
+| **R6** | IF posicion = Med_Derecha THEN servo = Med_Derecha | Linea a la derecha -> giro medio derecho (127°) |
+| **R7** | IF posicion = Muy_Derecha THEN servo = Muy_Derecha | Linea en extremo derecho -> giro maximo derecho (135°) |
 
-| # | Tipo | Antecedente | Consecuente | Proposito |
-|---|------|------------|-------------|-----------|
-| **R1** | Directa | IF Muy_Izquierda | Muy_Izquierda | Objeto en extremo izquierdo -> giro maximo izquierdo |
-| **R2** | Directa | IF Med_Izquierda | Med_Izquierda | Objeto a la izquierda -> giro medio izquierdo |
-| **R3** | Directa | IF Poco_Izquierda | Poco_Izquierda | Objeto ligeramente a la izquierda -> correccion leve |
-| **R4** | Directa | IF Centro | Centro | Objeto centrado -> mantener recto |
-| **R5** | Directa | IF Poco_Derecha | Poco_Derecha | Objeto ligeramente a la derecha -> correccion leve |
-| **R6** | Directa | IF Med_Derecha | Med_Derecha | Objeto a la derecha -> giro medio derecho |
-| **R7** | Directa | IF Muy_Derecha | Muy_Derecha | Objeto en extremo derecho -> giro maximo derecho |
-| **R8** | Refuerzo | IF Muy_Izq AND NOT Med_Izq | Muy_Izquierda | Refuerza giro fuerte cuando el objeto esta muy lejos a la izquierda |
-| **R9** | Refuerzo | IF Muy_Der AND NOT Med_Der | Muy_Derecha | Refuerza giro fuerte cuando el objeto esta muy lejos a la derecha |
-| **R10** | Refuerzo | IF Med_Izq AND NOT Poco_Izq | Med_Izquierda | Refuerza giro medio cuando no hay influencia del centro |
-| **R11** | Refuerzo | IF Med_Der AND NOT Poco_Der | Med_Derecha | Refuerza giro medio cuando no hay influencia del centro |
-| **R12** | Transicion | IF Poco_Izq AND Centro | Centro | Suaviza la transicion izquierda-centro |
-| **R13** | Transicion | IF Poco_Der AND Centro | Centro | Suaviza la transicion derecha-centro |
-| **R14** | Transicion | IF Centro AND NOT Poco_Izq AND NOT Poco_Der | Centro | Centro puro, sin ambiguedad lateral |
-| **R15** | Seguridad | IF NOT ninguno significativo | Centro | Sin deteccion clara -> mantener recto |
+#### Codigo de las reglas (skfuzzy)
 
-#### Calculo de activacion de cada regla
-
-```
-r1  = mu_muy_izq                              # -> Muy_Izquierda
-r2  = mu_med_izq                              # -> Med_Izquierda
-r3  = mu_poco_izq                             # -> Poco_Izquierda
-r4  = mu_cen                                  # -> Centro
-r5  = mu_poco_der                             # -> Poco_Derecha
-r6  = mu_med_der                              # -> Med_Derecha
-r7  = mu_muy_der                              # -> Muy_Derecha
-
-r8  = min(mu_muy_izq, 1 - mu_med_izq)        # -> Muy_Izquierda
-r9  = min(mu_muy_der, 1 - mu_med_der)        # -> Muy_Derecha
-r10 = min(mu_med_izq, 1 - mu_poco_izq)       # -> Med_Izquierda
-r11 = min(mu_med_der, 1 - mu_poco_der)       # -> Med_Derecha
-
-r12 = min(mu_poco_izq, mu_cen)               # -> Centro
-r13 = min(mu_poco_der, mu_cen)               # -> Centro
-r14 = min(mu_cen, 1 - mu_poco_izq,
-          1 - mu_poco_der)                    # -> Centro
-
-r15 = min(1 - mu_muy_izq, 1 - mu_med_izq,
-          1 - mu_poco_izq, 1 - mu_cen,
-          1 - mu_poco_der, 1 - mu_med_der,
-          1 - mu_muy_der)                     # -> Centro
+```python
+r1 = ctrl.Rule(posicion['muy_izq'], servo['muy_izq'])
+r2 = ctrl.Rule(posicion['med_izq'], servo['med_izq'])
+r3 = ctrl.Rule(posicion['poco_izq'], servo['poco_izq'])
+r4 = ctrl.Rule(posicion['centro'], servo['centro'])
+r5 = ctrl.Rule(posicion['poco_der'], servo['poco_der'])
+r6 = ctrl.Rule(posicion['med_der'], servo['med_der'])
+r7 = ctrl.Rule(posicion['muy_der'], servo['muy_der'])
 ```
 
-#### Agregacion por conjunto de salida
-
-Cuando multiples reglas apuntan al mismo conjunto de salida, se usa OR (maximo):
-
-```
-Muy_Izquierda  = max(r1, r8)
-Med_Izquierda  = max(r2, r10)
-Poco_Izquierda = r3
-Centro         = max(r4, r12, r13, r14, r15)
-Poco_Derecha   = r5
-Med_Derecha    = max(r6, r11)
-Muy_Derecha    = max(r7, r9)
-```
-
-#### Logica detras de las reglas
-
-- **R1-R7 (directas):** Cada conjunto de entrada mapea directamente a su conjunto de salida correspondiente. Proporcionan la respuesta proporcional base del sistema.
-- **R8-R9 (refuerzo extremo):** Usan NOT del vecino hacia el centro para activarse fuertemente solo cuando el objeto esta en el borde extremo del frame, produciendo los giros mas agresivos.
-- **R10-R11 (refuerzo medio):** Usan NOT del vecino hacia el centro para reforzar el giro medio cuando no hay ambiguedad con la zona central.
-- **R12-R13 (transicion suave):** AND entre un conjunto lateral cercano y Centro genera correcciones suaves en la zona de transicion, evitando cambios bruscos.
-- **R14 (centro puro):** Refuerza la posicion recta cuando el objeto esta claramente centrado sin ambiguedad lateral.
-- **R15 (seguridad):** Garantiza que si ningun conjunto tiene activacion significativa, el servo se mantiene recto (113 grados).
+Las transiciones suaves entre reglas se logran gracias al **traslape de los conjuntos de entrada** (espaciado de 0.15 entre picos). Cuando la posicion cae en una zona de traslape, dos reglas se activan simultaneamente y la defuzzificacion por centroide produce un angulo intermedio.
 
 ### 5.8 Inferencia Mamdani
 
@@ -541,57 +489,36 @@ Donde `x_i` recorre el universo discretizado de 80 a 135 (56 puntos con resoluci
 
 Si el area total es cero (sin deteccion o sin activacion), se retorna **113 grados** (recto) como valor por defecto.
 
-### 5.10 Ejemplo de funcionamiento
+### 5.10 Comportamiento al perder la linea
 
-#### Escenario: Objeto detectado en posicion normalizada = 0.25
-
-**Paso 1 — Fuzzificacion:**
+Cuando la camara no detecta la linea (sin contorno valido), el sistema **no vuelve al centro**. En su lugar, realiza una **busqueda activa** girando el servo al maximo hacia el lado donde vio la linea por ultima vez:
 
 ```
-mu_muy_izq  = trapmf(0.25, [0.0, 0.0, 0.05, 0.20])  = 0.00
-mu_med_izq  = trimf(0.25, [0.05, 0.20, 0.35])        = 0.67
-mu_poco_izq = trimf(0.25, [0.20, 0.35, 0.50])         = 0.33
-mu_cen      = trimf(0.25, [0.35, 0.50, 0.65])         = 0.00
-mu_poco_der = trimf(0.25, [0.50, 0.65, 0.80])         = 0.00
-mu_med_der  = trimf(0.25, [0.65, 0.80, 0.95])         = 0.00
-mu_muy_der  = trapmf(0.25, [0.80, 0.95, 1.0, 1.0])   = 0.00
+ultima_posicion < 0.5  -->  servo = 80°  (full izquierda)
+ultima_posicion >= 0.5 -->  servo = 135° (full derecha)
 ```
 
-**Paso 2 — Activacion de reglas:**
+Esto permite al AGV intentar reencontrar la linea en curvas cerradas o cuando se sale momentaneamente del trazado.
 
 ```
-r1  = 0.00                              -> Muy_Izquierda
-r2  = 0.67                              -> Med_Izquierda
-r3  = 0.33                              -> Poco_Izquierda
-r4  = 0.00                              -> Centro
-r5  = 0.00                              -> Poco_Derecha
-r6  = 0.00                              -> Med_Derecha
-r7  = 0.00                              -> Muy_Derecha
-r8  = min(0.00, 1 - 0.67) = 0.00       -> Muy_Izquierda
-r9  = min(0.00, 1 - 0.00) = 0.00       -> Muy_Derecha
-r10 = min(0.67, 1 - 0.33) = 0.67       -> Med_Izquierda
-r11 = min(0.00, 1 - 0.00) = 0.00       -> Med_Derecha
-r12 = min(0.33, 0.00) = 0.00           -> Centro
-r13 = min(0.00, 0.00) = 0.00           -> Centro
-r14 = min(0.00, 1 - 0.33, 1 - 0.00) = 0.00  -> Centro
-r15 = min(1.00, 0.33, 0.67, 1.00, 1.00, 1.00, 1.00) = 0.33  -> Centro
+         Linea detectada                    Linea perdida
+        (control difuso)               (busqueda activa)
+
+  [Camara ve linea]                [Camara NO ve linea]
+         |                                   |
+         v                                   v
+  posicion_norm = cx/width         Revisar ultima_posicion
+         |                              /            \
+         v                            <0.5          >=0.5
+  skfuzzy calcula angulo              |               |
+  [80° - 135°]                  servo = 80°      servo = 135°
+         |                      (full izq)       (full der)
+         v                              \            /
+  Guarda ultima_posicion                 v          v
+         |                        [Sigue girando hasta
+         v                         reencontrar la linea]
+  Envia angulo MQTT
 ```
-
-**Paso 3 — Agregacion por salida:**
-
-```
-Muy_Izquierda  = max(0.00, 0.00) = 0.00
-Med_Izquierda  = max(0.67, 0.67) = 0.67
-Poco_Izquierda = 0.33
-Centro         = max(0.00, 0.00, 0.00, 0.00, 0.33) = 0.33
-Poco_Derecha   = 0.00
-Med_Derecha    = max(0.00, 0.00) = 0.00
-Muy_Derecha    = max(0.00, 0.00) = 0.00
-```
-
-**Paso 4 — Defuzzificacion (centroide):**
-
-El area resultante se concentra entre Med_Izquierda (pico en 40), Poco_Izquierda (pico en 67) y Centro (pico en 90), con Med_Izquierda dominando. El centroide resulta aproximadamente en **~58 grados**, indicando un giro moderado a la izquierda.
 
 ---
 
@@ -632,7 +559,7 @@ El sistema cuenta con paro de emergencia dual (fisico y virtual):
                                  v
                     +-------------------------+
                     |   ESTADO: EMERGENCIA    |
-                    |   - Servo centrado 90   |
+                    |   - Servo centrado 113  |
                     |   - LEDs apagados       |
                     |   - Sistema bloqueado   |
                     |   - Registrado en CSV   |
@@ -664,20 +591,20 @@ La interfaz SCADA registra automaticamente todos los eventos del sistema en `eve
 |---|---|
 | `Fecha` | Fecha del evento (YYYY-MM-DD) |
 | `Hora` | Hora del evento (HH:MM:SS) |
-| `arranque/paro` | Tipo: `MOVIMIENTO`, `PARO`, `EMERGENCIA`, `ALERTA_TEMP`, `ALERTA_POT` |
+| `arranque/paro` | Tipo: `MOVIMIENTO`, `PARO`, `EMERGENCIA`, `ALERTA_TEMP`, `ALERTA_BAT` |
 | `Origen` | Fuente: `VIRTUAL` (interfaz), `FISICA` (botones ESP32), `SENSOR` (alertas) |
 | `LM35/uno` | Temperatura al momento del evento (C) |
-| `pot/uno` | Voltaje del potenciometro al momento del evento (V) |
+| `bateria/%` | Porcentaje de bateria al momento del evento (0-100) |
 
 ### Ejemplo
 
 ```csv
-Fecha,Hora,arranque/paro,Origen,LM35/uno,pot/uno
-2026-03-16,10:15:30,MOVIMIENTO,VIRTUAL,24.5,1.650
-2026-03-16,10:16:45,PARO,FISICA,25.1,1.700
-2026-03-16,10:20:12,ALERTA_TEMP,SENSOR,41.2,1.500
-2026-03-16,10:22:05,EMERGENCIA,VIRTUAL,42.0,1.450
-2026-03-16,10:23:00,ALERTA_POT,SENSOR,38.5,0.350
+Fecha,Hora,arranque/paro,Origen,LM35/uno,bateria/%
+2026-03-16,10:15:30,MOVIMIENTO,VIRTUAL,24.5,85.0
+2026-03-16,10:16:45,PARO,FISICA,25.1,82.3
+2026-03-16,10:20:12,ALERTA_TEMP,SENSOR,41.2,78.0
+2026-03-16,10:22:05,EMERGENCIA,VIRTUAL,42.0,75.5
+2026-03-16,10:23:00,ALERTA_BAT,SENSOR,38.5,15.2
 ```
 
 ### Reportes PDF
@@ -695,8 +622,10 @@ El boton **GENERAR REPORTE** en la interfaz SCADA crea un archivo `Reporte_SCADA
 | Tecnologia | Rol |
 |---|---|
 | **Python 3** | Control difuso, vision, interfaz SCADA |
-| **OpenCV (`cv2`)** | Captura de video, procesamiento de imagen, deteccion de color |
-| **NumPy** | Calculo de funciones de membresia, arrays para mascara y defuzzificacion |
+| **OpenCV (`cv2`)** | Captura de video, procesamiento de imagen, deteccion de linea |
+| **scikit-fuzzy (`skfuzzy`)** | Sistema de control difuso Mamdani (requiere scipy y networkx) |
+| **NumPy** | Arrays para procesamiento de imagen y calculo numerico |
+| **Picamera2** | Captura de video desde camara CSI en Raspberry Pi |
 | **Tkinter** | Interfaz grafica SCADA |
 | **paho-mqtt** | Cliente MQTT para Python |
 | **ReportLab** | Generacion de reportes PDF |
@@ -704,7 +633,8 @@ El boton **GENERAR REPORTE** en la interfaz SCADA crea un archivo `Reporte_SCADA
 | **MQTT (protocolo)** | Comunicacion ligera publicador-suscriptor |
 | **Mosquitto** | Broker MQTT (en Raspberry Pi) |
 | **Raspberry Pi 4B** | Ejecuta vision, control difuso, interfaz y broker MQTT |
-| **ESP32** | Microcontrolador con WiFi: servo, sensores, botones |
+| **ESP32** | Microcontrolador con WiFi: servo, motor, sensores, botones |
+| **TB6612FNG** | Driver de motor DC |
 | **ESP32Servo** | Libreria para control de servo en ESP32 |
 | **PubSubClient** | Libreria MQTT para Arduino/ESP32 |
 
@@ -716,21 +646,21 @@ El boton **GENERAR REPORTE** en la interfaz SCADA crea un archivo `Reporte_SCADA
 
 > **Nota:** Estas configuraciones estan hardcodeadas en los archivos fuente.
 
-| Parametro | Valor en ControlDifuso.py | Valor en ESP32 | Valor en Scada.py |
+| Parametro | Valor en ControlLinea_skfuzzy.py | Valor en ESP32 | Valor en Scada.py |
 |---|---|---|---|
-| SSID WiFi | — | `JOSUE's Galaxy A52` | — |
-| Contrasena WiFi | — | `jog18030` | — |
-| IP del broker MQTT | `10.91.115.191` | `10.20.185.191` | `10.0.0.5` |
+| SSID WiFi | — | `A52 de Roberto` | — |
+| Contrasena WiFi | — | `123456789` | — |
+| IP del broker MQTT | `127.0.0.1` | `10.249.23.191` | `10.184.97.191` |
 | Puerto MQTT | `1883` | `1883` | `1883` |
 
 **Topics MQTT:**
 
 | Topic | Publicador | Suscriptor | Contenido |
 |---|---|---|---|
-| `esp32/servo/control` | ControlDifuso.py | ESP32 | Angulo del servo (80-135, recto=113) |
+| `esp32/servo/control` | ControlLinea_skfuzzy.py | ESP32 | Angulo del servo (80-135, recto=113) |
 | `esp32/arranque` | Scada.py | ESP32 | GO, STOP, EMERGENCIA, RESET_EMERGENCIA |
 | `arranque/paro` | ESP32 | Scada.py | MOVIMIENTO, PARO, EMERGENCIA |
-| `pot/uno` | ESP32 | Scada.py | Voltaje del potenciometro (0-3.3V) |
+| `bateria/porcentaje` | ESP32 | Scada.py | Porcentaje de bateria (0-100%) |
 | `LM35/uno` | ESP32 | Scada.py | Temperatura en grados C |
 
 ### 9.2 Pines GPIO del ESP32
@@ -742,20 +672,24 @@ El boton **GENERAR REPORTE** en la interfaz SCADA crea un archivo `Reporte_SCADA
 | GPIO 15 | `ledder` | LED indicador de giro derecho |
 | GPIO 2 | `PIN_LED` | LED de estado encendido |
 | GPIO 23 | `PIN_LEDPARO` | LED de estado en paro |
-| GPIO 18 | `PIN_BOTON_ON` | Boton de encendido (INPUT_PULLUP) |
+| GPIO 12 | `PIN_BOTON_ON` | Boton de encendido (INPUT_PULLUP) |
 | GPIO 4 | `PIN_BOTON_OFF` | Boton de apagado (INPUT_PULLUP) |
 | GPIO 13 | `PIN_ESTOP` | Boton E-Stop NC (INPUT_PULLUP, interrupcion RISING) |
-| GPIO 34 | `pinPot1` | Lectura de potenciometro (ADC, 12 bits) |
+| GPIO 34 | `pinBateria` | Lectura de bateria via divisor de voltaje 30kΩ/7.5kΩ (ADC, 12 bits) |
 | GPIO 36 | `pinLM35` | Lectura de sensor LM35 (ADC, 12 bits) |
+| GPIO 18 | `AIN1` | Motor DC - direccion (TB6612FNG) |
+| GPIO 19 | `AIN2` | Motor DC - direccion (TB6612FNG) |
+| GPIO 21 | `PWMA` | Motor DC - PWM velocidad (TB6612FNG) |
+| GPIO 22 | `STBY` | Motor DC - standby (TB6612FNG) |
 
 ### 9.3 Parametros de vision
 
 | Parametro | Valor | Descripcion |
 |---|---|---|
-| Indice de camara | `0` | Primera camara detectada por el sistema |
-| Rango HSV minimo | `[100, 150, 0]` | Limite inferior del azul |
-| Rango HSV maximo | `[140, 255, 255]` | Limite superior del azul |
-| Area minima del objeto | `500 px` | Filtra ruido y objetos pequenos |
+| Camara | Picamera2 (CSI) | Camara CSI de la Raspberry Pi, 640x480 |
+| `UMBRAL_BLANCO` | `200` | Umbral de binarizacion para detectar linea blanca (0-255) |
+| `MIN_AREA` | `300 px` | Area minima de contorno para filtrar ruido |
+| `ROI_PROPORCION` | `0.4` | Fraccion inferior del frame a analizar (40% de abajo) |
 | Umbral de cambio servo | `2 grados` | Solo envia al ESP32 si el cambio supera este umbral |
 | Delay por fotograma | `1 ms` | `cv2.waitKey(1)` — ESC para salir |
 
@@ -766,16 +700,18 @@ El boton **GENERAR REPORTE** en la interfaz SCADA crea un archivo `Reporte_SCADA
 ```
 Vision/
 |
-|-- ControlDifuso.py               # Control difuso Mamdani + vision + MQTT
+|-- ControlLinea_skfuzzy.py        # Control difuso (skfuzzy) + vision + MQTT (archivo principal)
+|-- ControlLinea_PC_Demo.py        # Demo en PC con webcam y panel de visualizacion difusa
 |-- Scada.py                       # Interfaz SCADA: monitoreo, control, CSV, reportes PDF
 |-- eventos.csv                    # Registro de eventos (generado automaticamente)
 |
-|-- esp32/
-|   |-- esp32_ackermann.ino        # Firmware actual: servo Ackermann + sensores + E-Stop
-|   |-- esp32.ino                  # Firmware legacy: control diferencial (no usado)
+|-- ControlAckermanMQTT/
+|   |-- ControlAckermanMQTT.ino    # Firmware ESP32: servo + motor + bateria + sensores + E-Stop
+|
+|-- LectorBateria/
+|   |-- LectorBateria.ino          # Utilidad para probar lectura de bateria por serial
 |
 |-- DOCUMENTACION.md               # Este archivo
-|-- ControlDifuso_Documentacion.md # Documentacion detallada del control difuso
 ```
 
 ---
@@ -783,69 +719,77 @@ Vision/
 ## 11. Flujo de datos
 
 ```
-[Camara USB] --> [Fotograma BGR]
+[Camara CSI] --> [Fotograma BGR]
                        |
                        v
-                [Conversion HSV]
+              [Escala de grises]
                        |
                        v
-             [Mascara de color azul]
-             [H:100-140, S:150-255, V:0-255]
+              [ROI: 40% inferior]
+                       |
+                       v
+              [Umbral > 200 = blanco]
+              [Morfologia: apertura + cierre]
                        |
                        v
              [Deteccion de contornos]
                        |
-                 Hay objeto > 500px?
+                 Hay linea > 300px?
                 /                  \
               No                    Si
               |                     |
-        (servo = 90)          [Calcula centroide]
+    [BUSQUEDA ACTIVA]         [Calcula centroide]
+    ultima_pos < 0.5?               |
+      Si -> servo=80°               v
+      No -> servo=135°    [Normaliza posicion]
+              |           pos = cx / ancho_frame
+              |                     |
+              |                     v
+              |       +-----------------------------+
+              |       |    CONTROL DIFUSO MAMDANI   |
+              |       |    (scikit-fuzzy)            |
+              |       |                             |
+              |       |  1. Fuzzificacion (7 MFs)   |
+              |       |  2. 7 reglas difusas        |
+              |       |  3. Inferencia (recorte)    |
+              |       |  4. Defuzzificacion         |
+              |       |     (centroide)             |
+              |       |                             |
+              |       |  Entrada: pos [0, 1]        |
+              |       |  Salida: angulo [80, 135]   |
+              |       +-----------------------------+
+              |                     |
+              +----------+----------+
+                         |
+                         v
+                  Cambio > 2 grados?
+                 /                  \
+               No                    Si
+            (ignora)          [Publica angulo MQTT]
+                              esp32/servo/control
                                     |
-                                    v
-                          [Normaliza posicion]
-                          pos = cx / ancho_frame
+                             [Broker retransmite]
                                     |
-                                    v
-                      +-----------------------------+
-                      |    CONTROL DIFUSO MAMDANI   |
-                      |                             |
-                      |  1. Fuzzificacion (7 MFs)   |
-                      |  2. 15 reglas difusas       |
-                      |  3. Inferencia (recorte)    |
-                      |  4. Defuzzificacion         |
-                      |     (centroide)             |
-                      |                             |
-                      |  Entrada: pos [0, 1]        |
-                      |  Salida: angulo [0, 180]    |
-                      +-----------------------------+
+                              [ESP32 recibe]
                                     |
-                                    v
-                        Cambio > 2 grados?
-                       /                  \
-                     No                    Si
-                  (ignora)          [Publica angulo MQTT]
-                                   esp32/servo/control
-                                          |
-                                   [Broker retransmite]
-                                          |
-                                    [ESP32 recibe]
-                                          |
-                                Emergencia activa?
-                               /                  \
-                             Si                    No
-                       (ignora todo)         ledState == true?
-                                            /              \
-                                          No                Si
-                                    (ignora todo)     [Escribe servo]
-                                                      [Actualiza LEDs]
+                          Emergencia activa?
+                         /                  \
+                       Si                    No
+                 (ignora todo)         ledState == true?
+                                      /              \
+                                    No                Si
+                              (ignora todo)     [Escribe servo]
+                                                [Actualiza LEDs]
+                                                [Motor adelante]
 
               [Paralelamente cada segundo]
                          |
              +-----------+-----------+
              |           |           |
        [Publica      [Publica    [Estado solo
-       voltaje       temp LM35   al cambiar]
-       pot/uno]      LM35/uno]   arranque/paro
+       bateria %     temp LM35   al cambiar]
+       bateria/      LM35/uno]   arranque/paro
+       porcentaje]
 
               [Scada.py recibe todo]
                          |
@@ -853,7 +797,7 @@ Vision/
              |           |           |
        [Actualiza    [Grafica    [Registra
        focos y       temp en     evento en
-       barra pot]    tiempo      eventos.csv]
+       barra bat]    tiempo      eventos.csv]
                      real]
 ```
 
@@ -870,10 +814,10 @@ sudo systemctl enable mosquitto
 sudo systemctl start mosquitto
 
 # Instalar dependencias de Python
-pip install opencv-python paho-mqtt numpy reportlab matplotlib
+pip install opencv-python paho-mqtt numpy scikit-fuzzy scipy networkx reportlab matplotlib
 
-# Ejecutar el control difuso + vision
-python3 ControlDifuso.py
+# Ejecutar el control difuso + vision (seguidor de linea)
+python3 ControlLinea_skfuzzy.py
 
 # Ejecutar la interfaz SCADA (en otra terminal)
 python3 Scada.py
@@ -884,10 +828,17 @@ python3 Scada.py
 1. Instalar el **IDE de Arduino** (version 2.x recomendada).
 2. Agregar soporte para **ESP32** en el gestor de placas.
 3. Instalar librerias: **PubSubClient** (2.8+) y **ESP32Servo**.
-4. Abrir `esp32/esp32_ackermann.ino`.
+4. Abrir `ControlAckermanMQTT/ControlAckermanMQTT.ino`.
 5. Seleccionar la placa correcta (ej. *ESP32 Dev Module*).
 6. Compilar y cargar al ESP32.
 
+### En PC (solo demo)
+
+```bash
+pip install opencv-python numpy scikit-fuzzy scipy networkx
+python3 ControlLinea_PC_Demo.py
+```
+
 ---
 
-*Documentacion actualizada el 2026-03-24*
+*Documentacion actualizada el 2026-05-11*

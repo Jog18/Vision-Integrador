@@ -34,12 +34,12 @@ const int PIN_ESTOP = 13;
 volatile bool emergencia = false; // flag de emergencia (volatile porque se modifica en ISR)
 bool flag = false;
 
-// ---- Servo de dirección Ackermann ----
+// ---- Servo de dirección Ackermann (SIMETRICO) ----
 const int PIN_SERVO = 5;  // Pin PWM para el servo de dirección
 Servo servoDir;
-// Rango mecánico del servo Ackermann: 80° (izq máx) – 135° (der máx), 113° = recto
-const int SERVO_MIN   = 80;
-const int SERVO_MAX   = 135;
+// Rango SIMETRICO: 65° (izq máx) – 160° (der máx), 113° = recto, +-48 grados
+const int SERVO_MIN   = 65;
+const int SERVO_MAX   = 160;
 const int SERVO_RECTO = 113;
 int anguloActual = SERVO_RECTO;
 
@@ -54,7 +54,8 @@ const int PWMA = 21;
 const int STBY = 22;
 const int PWM_FREQ = 1000;
 const int PWM_RESOLUTION = 8;
-const int VELOCIDAD_FIJA = 50; // PWM fijo 0-255
+const int VELOCIDAD_FIJA = 30; // PWM fijo 0-255 (adelante)
+const int VELOCIDAD_REV  = 70; // PWM reversa para estacionamiento
 
 //Leer sensores. BATERIA
 const int pinBateria = 34; // GPI34 para leer voltaje de bateria (antes pot)
@@ -72,6 +73,12 @@ float temperatura = 0.0; // temperatura equivalente
 void motorForward(int speed) {
   digitalWrite(AIN1, HIGH);
   digitalWrite(AIN2, LOW);
+  ledcWrite(PWMA, speed);
+}
+
+void motorBackward(int speed) {
+  digitalWrite(AIN1, LOW);
+  digitalWrite(AIN2, HIGH);
   ledcWrite(PWMA, speed);
 }
 
@@ -215,7 +222,7 @@ void loop() {
       digitalWrite(PIN_LEDPARO, LOW);
       // Arrancar el motor hacia adelante con velocidad fija
       motorForward(VELOCIDAD_FIJA);
-      Serial.println("Estado: MOVIMIENTO (motor adelante PWM 80)");
+      Serial.println("Estado: MOVIMIENTO (motor adelante)");
     } else {
       client.publish("arranque/paro", "PARO");
       digitalWrite(PIN_LEDPARO, HIGH);
@@ -314,7 +321,7 @@ void callback(char* topic, byte* message, unsigned int length) {
   // ---- Control del servo de dirección (desde control difuso) ----
   if (String(topic) == "esp32/servo/control" && ledState) {
     int angulo = messageTemp.toInt();
-    // Validar rango mecánico del Ackermann: [80°, 135°]
+    // Validar rango mecánico SIMETRICO del Ackermann: [65°, 160°]
     if (angulo < SERVO_MIN) angulo = SERVO_MIN;
     if (angulo > SERVO_MAX) angulo = SERVO_MAX;
 
@@ -360,6 +367,13 @@ void callback(char* topic, byte* message, unsigned int length) {
     digitalWrite(PIN_LED, ledState);
     // Arrancar motor al recibir GO
     motorForward(VELOCIDAD_FIJA);
+  }
+
+  if (messageTemp == "GO_REV") { // REVERSA para estacionamiento
+    apagarTodo();
+    ledState = true;
+    digitalWrite(PIN_LED, ledState);
+    motorBackward(VELOCIDAD_REV);
   }
 }
 
