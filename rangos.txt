@@ -1,0 +1,3 @@
+azul: bajo: (100, 150,   0)  alto: (140, 255, 255)
+rojo: bajo: (  0,  37,  81)  alto: ( 74, 255, 255)
+amarillobajo: ( 20, 100, 100)  alto: ( 35, 255, 255)

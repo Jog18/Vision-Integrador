@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 
 # --- Configuracion MQTT ---
 # %%
-BROKER = "10.91.15.191"
+BROKER = "192.168.1.68"
 # %%
 PORT = 1883
 
@@ -144,9 +144,9 @@ def on_message(client, userdata, msg):
             pass
 
 
-def mostrar_alerta_temp(temp):
-    messagebox.showwarning("Alerta Temperatura",
-                           f"Temperatura critica: {temp:.1f} C\nSupera el limite de 40 C")
+##def mostrar_alerta_temp(temp):
+  ##  messagebox.showwarning("Alerta Temperatura",
+    ##                       f"Temperatura critica: {temp:.1f} C\nSupera el limite de 40 C")
 
 
 ##def mostrar_alerta_bat(porcentaje):
