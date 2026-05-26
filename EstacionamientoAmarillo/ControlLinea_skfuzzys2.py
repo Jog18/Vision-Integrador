@@ -98,16 +98,18 @@ ROI_COLOR_FIN = 0.85
 
 # Rangos HSV para cada color.
 # >>> CALIBRAR CON rangosHSV.py ANTES DE USAR <<<
+# Rojo usa DOS mascaras (hue wraps around 0/180 en HSV)
 RANGOS_HSV = {
-    'Rojo':     {'bajo': np.array([0,   100, 100]), 'alto': np.array([10,  255, 255])},
-    'Azul':     {'bajo': np.array([100, 150,   0]), 'alto': np.array([140, 255, 255])},
-    'Amarillo': {'bajo': np.array([20,  100, 100]), 'alto': np.array([35,  255, 255])},
+    'Rojo_bajo': {'bajo': np.array([0,   120, 70]), 'alto': np.array([10,  255, 255])},
+    'Rojo_alto': {'bajo': np.array([170, 120, 70]), 'alto': np.array([180, 255, 255])},
+    'Azul':      {'bajo': np.array([100, 150,  0]), 'alto': np.array([140, 255, 255])},
+    'Amarillo':  {'bajo': np.array([22,  130, 130]), 'alto': np.array([33,  255, 255])},
 }
 
 MIN_AREA_COLOR = 1500
 
 # Numero de linea en la que se activa la parada en estacion
-LINEAS_PARA_ESTACIONAR = 4
+LINEAS_PARA_ESTACIONAR = 3
 
 # --- Tiempos ---
 TIEMPO_ESPERA_ESTACION = 5.0
@@ -184,6 +186,22 @@ def publicar_estacion(client, color):
 
 
 # ============================================================
+# MATRIZ DE TRANSFORMACION — Correccion de perspectiva de camara
+# ============================================================
+# Se aplica una transformacion afin al ROI de color para compensar
+# la distorsion de perspectiva de la camara montada en el AGV.
+# Puntos origen y destino calibrados para la camara a 15cm de altura.
+#
+# >>> ESTA SECCION CONTIENE LA MATRIZ DE TRANSFORMACION DEL PROYECTO <<<
+#
+SRC_POINTS = np.float32([[0, 0], [640, 0], [0, 144]])
+DST_POINTS = np.float32([[10, 0], [630, 0], [0, 144]])
+MATRIZ_PERSPECTIVA = cv2.getAffineTransform(SRC_POINTS, DST_POINTS)
+# La matriz resultante es 2x3 y se aplica en detectar_lineas_color()
+# para corregir la deformacion trapezoidal del ROI de deteccion.
+
+
+# ============================================================
 # FUNCIONES DE PROCESAMIENTO DE IMAGEN
 # ============================================================
 
@@ -215,15 +233,51 @@ def detectar_lineas_color(frame, height):
     y_ini = int(height * ROI_COLOR_INICIO)
     y_fin = int(height * ROI_COLOR_FIN)
     roi = frame[y_ini:y_fin, :]
-    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
 
-    kernel = np.ones((5, 5), np.uint8)
+    # Aplicar matriz de transformacion afin (correccion de perspectiva)
+    roi_w = roi.shape[1]
+    roi_h = roi.shape[0]
+    roi = cv2.warpAffine(roi, MATRIZ_PERSPECTIVA, (roi_w, roi_h))
+
+    # Filtro Gaussiano para reducir ruido y falsos positivos
+    roi_filtrado = cv2.GaussianBlur(roi, (7, 7), 0)
+    hsv = cv2.cvtColor(roi_filtrado, cv2.COLOR_BGR2HSV)
+
+    kernel = np.ones((7, 7), np.uint8)
     visibles = {}
 
-    for color, rango in RANGOS_HSV.items():
+    # --- Rojo: combinar DOS mascaras (hue 0-10 y 170-180) ---
+    mascara_rojo1 = cv2.inRange(hsv, RANGOS_HSV['Rojo_bajo']['bajo'],
+                                     RANGOS_HSV['Rojo_bajo']['alto'])
+    mascara_rojo2 = cv2.inRange(hsv, RANGOS_HSV['Rojo_alto']['bajo'],
+                                     RANGOS_HSV['Rojo_alto']['alto'])
+    mascara_rojo = cv2.bitwise_or(mascara_rojo1, mascara_rojo2)
+    mascara_rojo = cv2.morphologyEx(mascara_rojo, cv2.MORPH_OPEN, kernel)
+    mascara_rojo = cv2.morphologyEx(mascara_rojo, cv2.MORPH_CLOSE, kernel)
+
+    contours, _ = cv2.findContours(mascara_rojo, cv2.RETR_EXTERNAL,
+                                   cv2.CHAIN_APPROX_SIMPLE)
+    detectado_rojo = False
+    if contours:
+        mayor = max(contours, key=cv2.contourArea)
+        if cv2.contourArea(mayor) > MIN_AREA_COLOR:
+            detectado_rojo = True
+            x, y, w, h = cv2.boundingRect(mayor)
+            cv2.rectangle(frame, (x, y + y_ini), (x + w, y + h + y_ini),
+                          (0, 0, 255), 2)
+            cv2.putText(frame, "Rojo", (x, y + y_ini - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+    visibles['Rojo'] = detectado_rojo
+
+    # --- Azul y Amarillo: mascara simple con filtrado mejorado ---
+    for color in ['Azul', 'Amarillo']:
+        rango = RANGOS_HSV[color]
         mascara = cv2.inRange(hsv, rango['bajo'], rango['alto'])
         mascara = cv2.morphologyEx(mascara, cv2.MORPH_OPEN, kernel)
         mascara = cv2.morphologyEx(mascara, cv2.MORPH_CLOSE, kernel)
+        # Erosion extra para amarillo (reduce falsos positivos)
+        if color == 'Amarillo':
+            mascara = cv2.erode(mascara, np.ones((3, 3), np.uint8), iterations=1)
 
         contours, _ = cv2.findContours(mascara, cv2.RETR_EXTERNAL,
                                        cv2.CHAIN_APPROX_SIMPLE)
@@ -237,7 +291,6 @@ def detectar_lineas_color(frame, height):
                               (0, 255, 255), 2)
                 cv2.putText(frame, color, (x, y + y_ini - 5),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
-
         visibles[color] = detectado
 
     return visibles
@@ -452,6 +505,10 @@ def main():
                 # Detener el AGV
                 cmd_stop(client)
                 publicar_estacion(client, color_estacion_actual)
+
+                # Forzar estado local a PARO para evitar salida inmediata
+                # (el mensaje MQTT de vuelta del ESP32 puede tardar)
+                estado_esp32 = "PARO"
 
                 if color_estacion_actual == 'Amarillo':
                     estado = REPOSO_AMARILLO

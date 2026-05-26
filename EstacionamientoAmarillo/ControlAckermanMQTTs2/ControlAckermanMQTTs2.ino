@@ -24,7 +24,7 @@ bool lastReadingOn  = HIGH;
 bool lastReadingOff = HIGH;
 unsigned long lastDebounceTimeOn  = 0;
 unsigned long lastDebounceTimeOff = 0;
-const unsigned long debounceDelay = 50;
+const unsigned long debounceDelay = 200;
 
 // E-Stop (Paro de emergencia) - Boton normalmente cerrado
 const int PIN_ESTOP = 13;
@@ -87,7 +87,7 @@ void stopMotor() {
 void IRAM_ATTR isrEmergencia() {
   static unsigned long ultimaISR = 0;
   unsigned long ahora = millis();
-  if (ahora - ultimaISR < 50) return;
+  if (ahora - ultimaISR < 300) return;
   ultimaISR = ahora;
 
   if (digitalRead(PIN_ESTOP) == LOW) return;
@@ -387,18 +387,24 @@ void startStop() {
     }
   }
   lastReadingOn = readingOn;
+
+  // Boton OFF con doble lectura para filtrar ruido en GPIO4
   bool readingOff = digitalRead(PIN_BOTON_OFF);
   if (readingOff != lastReadingOff) {
     lastDebounceTimeOff = millis();
   }
   if ((millis() - lastDebounceTimeOff) > debounceDelay) {
     if (readingOff != buttonStateOff) {
-      buttonStateOff = readingOff;
-
-      if (buttonStateOff == LOW) {
+      // Confirmar con segunda lectura para evitar falsos disparos
+      delay(5);
+      bool confirmacion = digitalRead(PIN_BOTON_OFF);
+      if (confirmacion == readingOff && readingOff == LOW) {
+        buttonStateOff = readingOff;
         ledState = false;
         digitalWrite(PIN_LED, ledState);
         Serial.println("LED APAGADO");
+      } else if (confirmacion == readingOff) {
+        buttonStateOff = readingOff;
       }
     }
   }
