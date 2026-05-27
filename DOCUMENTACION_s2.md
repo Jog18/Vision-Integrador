@@ -584,9 +584,48 @@ ROI_COLOR_INICIO = 0.55  # inicio de la franja (desde arriba)
 ROI_COLOR_FIN = 0.85     # fin de la franja
 ```
 
+#### Matriz de transformacion afin — Correccion de perspectiva
+
+La camara esta montada a 15cm de altura sobre el AGV con un angulo de inclinacion hacia el frente. Esto produce una **distorsion trapezoidal** en el ROI de color: la parte superior del ROI (mas lejana) aparece mas ancha que la inferior (mas cercana). Para compensar esto se aplica una transformacion afin antes de la deteccion de color.
+
+```python
+SRC_POINTS = np.float32([[0, 0], [640, 0], [0, 144]])
+DST_POINTS = np.float32([[10, 0], [630, 0], [0, 144]])
+MATRIZ_PERSPECTIVA = cv2.getAffineTransform(SRC_POINTS, DST_POINTS)
+```
+
+| Punto | Origen (SRC) | Destino (DST) | Efecto |
+|---|---|---|---|
+| Esquina superior izquierda | (0, 0) | (10, 0) | Se mueve 10px hacia adentro |
+| Esquina superior derecha | (640, 0) | (630, 0) | Se mueve 10px hacia adentro |
+| Esquina inferior izquierda | (0, 144) | (0, 144) | Sin cambio (punto de anclaje) |
+
+**`cv2.getAffineTransform(src, dst)`** calcula la matriz afin 2x3 que mapea los 3 puntos origen a los 3 puntos destino. Esta matriz se aplica al ROI con:
+
+```python
+roi = cv2.warpAffine(roi, MATRIZ_PERSPECTIVA, (roi_w, roi_h))
+```
+
+**`cv2.warpAffine(imagen, matriz, tamano)`** aplica la transformacion afin a la imagen. El resultado es que las esquinas superiores se "empujan" 10 pixeles hacia el centro, corrigiendo la deformacion trapezoidal y mejorando la precision de la deteccion de color.
+
+```
+Antes (distorsion trapezoidal):       Despues (corregido):
++---------------------------+         +-------------------------+
+|                           |         |                         |
+|     (parte superior       |   -->   |   (esquinas recortadas  |
+|      mas ancha)           |         |    10px cada lado)      |
+|                           |         |                         |
++-----------+---------------+         +-----------+-------------+
+   (parte inferior ok)                   (sin cambio abajo)
+```
+
+> La matriz se calcula una sola vez al inicio del programa (constante global) y se reutiliza en cada frame.
+
+#### Pipeline de deteccion por color
+
 Para cada color (Rojo, Azul, Amarillo):
 
-1. Se aplica una **transformacion afin** (matriz de perspectiva) al ROI para compensar la distorsion trapezoidal de la camara montada a 15cm de altura.
+1. Se aplica la **transformacion afin** descrita arriba al ROI.
 2. Se aplica un **filtro Gaussiano** (kernel 7x7) para reducir ruido y falsos positivos.
 3. Se convierte la ROI a espacio de color **HSV**.
 4. Se aplica `cv2.inRange()` con los rangos HSV calibrados.
