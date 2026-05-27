@@ -1,10 +1,10 @@
 # Vision-Integrador — Documentacion Version s2 (EstacionamientoAmarillo)
 
-> **Estado:** Prototipo funcional
+> **Estado:** Version Final
 > **Version:** s2 — Estaciones de color con parada directa
 > **Autor:** Josue (im221466@itsatlixco.edu.mx)
 > **Fecha de inicio:** Marzo 2026
-> **Ultima actualizacion:** Mayo 2026
+> **Ultima actualizacion:** Mayo 2026 (Version Final)
 
 ---
 
@@ -16,7 +16,7 @@
 4. [Componentes del sistema](#4-componentes-del-sistema)
    - [4.1 Seguidor de Linea con Estaciones — ControlLinea_skfuzzys2.py](#41-seguidor-de-linea-con-estaciones--controllinea_skfuzzys2py)
    - [4.2 Firmware ESP32 — ControlAckermanMQTTs2.ino](#42-firmware-esp32--controlackermanmqtts2ino)
-   - [4.3 Interfaz SCADA — Scada.py](#43-interfaz-scada--scadapy)
+   - [4.3 Interfaz SCADA — Scada2.py](#43-interfaz-scada--scadapy)
 5. [Control Difuso — Detalle completo](#5-control-difuso--detalle-completo)
    - [5.1 Variable de entrada](#51-variable-de-entrada)
    - [5.2 Conjuntos difusos de entrada (7)](#52-conjuntos-difusos-de-entrada-7)
@@ -56,8 +56,9 @@
 14. [Flujo de datos completo](#14-flujo-de-datos-completo)
 15. [Pista fisica](#15-pista-fisica)
 16. [Constantes ajustables](#16-constantes-ajustables)
-17. [Requisitos para ejecutar el proyecto](#17-requisitos-para-ejecutar-el-proyecto)
-18. [Diferencias con la version s1](#18-diferencias-con-la-version-s1)
+17. [Integracion con PLC Siemens S7-1200](#17-integracion-con-plc-siemens-s7-1200)
+18. [Requisitos para ejecutar el proyecto](#18-requisitos-para-ejecutar-el-proyecto)
+19. [Diferencias con la version s1](#19-diferencias-con-la-version-s1)
 
 ---
 
@@ -69,7 +70,7 @@
 - **Control difuso tipo Mamdani** implementado con scikit-fuzzy (skfuzzy), con 7 conjuntos de entrada, 7 de salida y 7 reglas para calcular el angulo del servo de direccion de forma continua y suave.
 - **Seguimiento de linea blanca** sobre fondo negro usando Picamera2, con deteccion por umbral + contornos.
 - **Deteccion de lineas de color** (Rojo, Azul, Amarillo) en espacio HSV para identificar estaciones en la pista.
-- **Parada automatica en estaciones**: al detectar la 4ta linea de un color, el AGV se detiene directamente. Rojo y Azul esperan 5 segundos; Amarillo espera indefinidamente hasta comando externo.
+- **Parada automatica en estaciones**: al detectar la 3ra linea de un color, el AGV se detiene directamente. Rojo y Azul esperan 5 segundos; Amarillo espera indefinidamente hasta comando externo.
 - **Zonas con significado operativo**: Azul = zona de carga, Rojo = zona de descarga, Amarillo = zona de reposo.
 - **Recuperacion al perder la linea**: al perder la linea, el servo gira al maximo hacia el lado donde la vio por ultima vez para intentar reencontrarla.
 - **Comunicacion inalambrica** mediante protocolo MQTT (broker Mosquitto en Raspberry Pi).
@@ -117,7 +118,7 @@ El sistema detecta una linea blanca con la camara, normaliza su posicion horizon
 |                         +----------------+------------------+   |
 |                                          |                      |
 |   +--------------------------------------+------------------+   |
-|   | Scada.py (Tkinter)                                      |   |
+|   | Scada2.py (Tkinter)                                      |   |
 |   | - 3 focos: PARO / MOVIMIENTO / EMERGENCIA               |   |
 |   | - 4 focos zona: CARGA / DESCARGA / REPOSO / EN RUTA    |   |
 |   | - Botones: ARRANQUE / PARO / E-STOP / RESET / REPORTE  |   |
@@ -201,28 +202,28 @@ Firmware simplificado del microcontrolador. Controla el servo de direccion Acker
    - Recibe angulos continuos (65-160) del controlador difuso.
    - Valida rango y escribe al servo.
    - Posicion inicial y por defecto: 113 grados (recto).
-4. **Motor DC** via driver TB6612FNG (PWM fijo = 70, 0-255).
-5. **LEDs indicadores de direccion** (zona muerta +-3 grados alrededor de 113):
-   - Angulo < 110: LED izquierdo encendido (GPIO 16).
-   - Angulo > 116: LED derecho encendido (GPIO 15).
-   - 110-116: ambos LEDs encendidos (recto).
+4. **Motor DC** via driver TB6612FNG (PWM fijo = 50, 0-255).
+5. **LEDs indicadores de bateria** (3 niveles):
+   - LED BAT1 (GPIO 22): siempre encendido cuando bat > 0% (nivel bajo).
+   - LED BAT2 (GPIO 16): encendido cuando bat >= 40% (nivel medio).
+   - LED BAT3 (GPIO 15): encendido cuando bat >= 80% (nivel alto).
 6. **Comandos MQTT**:
    - `"GO"`: activa motor hacia adelante y LED de estado.
    - `"STOP"`: detiene todo, centra servo.
    - `"EMERGENCIA"`: paro de emergencia remoto.
    - `"RESET_EMERGENCIA"`: limpia flag de emergencia (solo si el boton fisico no esta presionado).
 7. **Sistema de arranque/paro fisico**:
-   - **Boton ON** (GPIO 12): enciende el sistema con debounce de 50ms.
-   - **Boton OFF** (GPIO 4): apaga el sistema con debounce de 50ms.
-   - **E-Stop fisico** (GPIO 13): boton NC con interrupcion de hardware (RISING) y debounce en ISR.
-8. **Lectura de bateria** cada segundo (GPIO 34): promedio de 20 muestras ADC, divisor de voltaje (30k / 7.5k, factor 5.0), calcula porcentaje (0-100%) y publica en `bateria/porcentaje`.
+   - **Boton ON** (GPIO 12): enciende el sistema con debounce de 200ms.
+   - **Boton OFF** (GPIO 4): apaga el sistema con debounce de 200ms y doble lectura de confirmacion.
+   - **E-Stop fisico** (GPIO 13): boton NC con interrupcion de hardware (RISING) y debounce de 300ms en ISR.
+8. **Lectura de bateria** cada segundo (GPIO 34): promedio de 20 muestras ADC, divisor de voltaje (factor 5.37), rango 8V-11.3V, calcula porcentaje (0-100%) y publica en `bateria/porcentaje`.
 9. **Lectura de temperatura** cada segundo: sensor LM35 (GPIO 36), publica en `LM35/uno`.
 10. **Publica estado** (`"MOVIMIENTO"`, `"PARO"`, `"EMERGENCIA"`) solo cuando cambia.
 11. **Reconexion automatica** WiFi y MQTT.
 
 ---
 
-### 4.3 Interfaz SCADA — `Scada.py`
+### 4.3 Interfaz SCADA — `Scada2.py`
 
 **Lenguaje:** Python 3
 **Dependencias:** `tkinter`, `paho-mqtt`, `reportlab`, `matplotlib`
@@ -544,7 +545,7 @@ ultima_posicion >= 0.5 -->  servo = 160  (full derecha)
                           |  conteo de color) |
                           +---------+---------+
                                     |
-                        4ta linea de un color detectada
+                        3ra linea de un color detectada
                         Pi envia STOP al ESP32
                         Pi publica zona en agv/estacion
                                     |
@@ -585,19 +586,23 @@ ROI_COLOR_FIN = 0.85     # fin de la franja
 
 Para cada color (Rojo, Azul, Amarillo):
 
-1. Se convierte la ROI a espacio de color **HSV**.
-2. Se aplica `cv2.inRange()` con los rangos HSV calibrados.
-3. Se aplica morfologia (apertura + cierre) con kernel 5x5.
-4. Se buscan contornos y se toma el mayor.
-5. Si el area del contorno mayor supera `MIN_AREA_COLOR` (1500 px), se considera una deteccion valida.
+1. Se aplica una **transformacion afin** (matriz de perspectiva) al ROI para compensar la distorsion trapezoidal de la camara montada a 15cm de altura.
+2. Se aplica un **filtro Gaussiano** (kernel 7x7) para reducir ruido y falsos positivos.
+3. Se convierte la ROI a espacio de color **HSV**.
+4. Se aplica `cv2.inRange()` con los rangos HSV calibrados.
+5. Se aplica morfologia (apertura + cierre) con kernel 7x7. Para amarillo se aplica erosion extra con kernel 3x3.
+6. Para **Rojo** se combinan dos mascaras (hue 0-10 y 170-180) con `cv2.bitwise_or` ya que el rojo envuelve el espectro HSV.
+7. Se buscan contornos y se toma el mayor.
+8. Si el area del contorno mayor supera `MIN_AREA_COLOR` (1500 px), se considera una deteccion valida.
 
 #### Rangos HSV por defecto
 
 | Color | H bajo | S bajo | V bajo | H alto | S alto | V alto |
 |-------|--------|--------|--------|--------|--------|--------|
-| Rojo | 0 | 100 | 100 | 10 | 255 | 255 |
+| Rojo (bajo) | 0 | 120 | 70 | 10 | 255 | 255 |
+| Rojo (alto) | 170 | 120 | 70 | 180 | 255 | 255 |
 | Azul | 100 | 150 | 0 | 140 | 255 | 255 |
-| Amarillo | 20 | 100 | 100 | 35 | 255 | 255 |
+| Amarillo | 22 | 130 | 130 | 33 | 255 | 255 |
 
 > **IMPORTANTE:** Estos rangos deben calibrarse con `rangosHSV.py` antes de usar en un entorno real.
 
@@ -650,7 +655,7 @@ El sistema cuenta con paro de emergencia dual (fisico y virtual):
 - **Al presionar o si el cable se rompe**: el circuito se abre (GPIO lee HIGH) -> **fail-safe**.
 - Usa **interrupcion de hardware** (`attachInterrupt`, `RISING`) para respuesta en microsegundos.
 - La ISR (`isrEmergencia`) apaga LEDs, detiene motor y activa flag de emergencia inmediatamente.
-- **Debounce en ISR**: ignora interrupciones separadas por menos de 50ms.
+- **Debounce en ISR**: ignora interrupciones separadas por menos de 300ms.
 
 ### E-Stop virtual (interfaz SCADA)
 
@@ -708,11 +713,11 @@ El sistema cuenta con paro de emergencia dual (fisico y virtual):
 | Topic | Publicador | Suscriptor | Contenido | Direccion |
 |-------|-----------|------------|-----------|-----------|
 | `esp32/servo/control` | ControlLinea (Pi) | ESP32 | Angulo del servo (65-160, recto=113) | Pi -> ESP32 |
-| `esp32/arranque` | Scada.py / ControlLinea (Pi) | ESP32 | `GO`, `STOP`, `EMERGENCIA`, `RESET_EMERGENCIA` | Pi -> ESP32 |
-| `arranque/paro` | ESP32 | Scada.py / ControlLinea (Pi) | `MOVIMIENTO`, `PARO`, `EMERGENCIA` | ESP32 -> Pi |
-| `agv/estacion` | ControlLinea (Pi) | Scada.py | `CARGA`, `DESCARGA`, `REPOSO`, `EN_RUTA` | Pi -> SCADA |
-| `bateria/porcentaje` | ESP32 | Scada.py | Porcentaje de bateria (0-100%) | ESP32 -> Pi |
-| `LM35/uno` | ESP32 | Scada.py | Temperatura en grados C | ESP32 -> Pi |
+| `esp32/arranque` | Scada2.py / ControlLinea (Pi) | ESP32 | `GO`, `STOP`, `EMERGENCIA`, `RESET_EMERGENCIA` | Pi -> ESP32 |
+| `arranque/paro` | ESP32 | Scada2.py / ControlLinea (Pi) | `MOVIMIENTO`, `PARO`, `EMERGENCIA` | ESP32 -> Pi |
+| `agv/estacion` | ControlLinea (Pi) | Scada2.py | `CARGA`, `DESCARGA`, `REPOSO`, `EN_RUTA` | Pi -> SCADA |
+| `bateria/porcentaje` | ESP32 | Scada2.py | Porcentaje de bateria (0-100%) | ESP32 -> Pi |
+| `LM35/uno` | ESP32 | Scada2.py | Temperatura en grados C | ESP32 -> Pi |
 
 ### 8.2 Flujo de mensajes por escenario
 
@@ -887,7 +892,7 @@ El boton **GENERAR REPORTE** en la interfaz SCADA crea un archivo `Reporte_SCADA
 
 > **Nota:** Estas configuraciones estan hardcodeadas en los archivos fuente.
 
-| Parametro | ControlLinea_skfuzzys2.py | ESP32 | Scada.py |
+| Parametro | ControlLinea_skfuzzys2.py | ESP32 | Scada2.py |
 |---|---|---|---|
 | SSID WiFi | — | `INFINITUM60B6` | — |
 | Contrasena WiFi | — | `NUPatFq39h` | — |
@@ -902,19 +907,20 @@ El boton **GENERAR REPORTE** en la interfaz SCADA crea un archivo `Reporte_SCADA
 | Pin GPIO | Nombre en codigo | Funcion |
 |---|---|---|
 | GPIO 5 | `PIN_SERVO` | Servo de direccion Ackermann (PWM 500-2400 us, 50 Hz) |
-| GPIO 16 | `ledizq` | LED indicador de giro izquierdo |
-| GPIO 15 | `ledder` | LED indicador de giro derecho |
+| GPIO 22 | `LED_BAT1` | LED indicador bateria nivel bajo (siempre ON si bat > 0%) |
+| GPIO 16 | `LED_BAT2` | LED indicador bateria nivel medio (ON si bat >= 40%) |
+| GPIO 15 | `LED_BAT3` | LED indicador bateria nivel alto (ON si bat >= 80%) |
 | GPIO 2 | `PIN_LED` | LED de estado encendido |
-| GPIO 23 | `PIN_LEDPARO` | LED de estado en paro |
-| GPIO 12 | `PIN_BOTON_ON` | Boton de encendido (INPUT_PULLUP, debounce 50ms) |
-| GPIO 4 | `PIN_BOTON_OFF` | Boton de apagado (INPUT_PULLUP, debounce 50ms) |
-| GPIO 13 | `PIN_ESTOP` | Boton E-Stop NC (INPUT_PULLUP, interrupcion RISING) |
-| GPIO 34 | `pinBateria` | Lectura de bateria via divisor de voltaje 30k/7.5k (ADC, 12 bits) |
+| GPIO 23 | `PIN_LEDPARO` | LED de estado en paro (parpadea en emergencia 300ms) |
+| GPIO 12 | `PIN_BOTON_ON` | Boton de encendido (INPUT_PULLUP, debounce 200ms) |
+| GPIO 4 | `PIN_BOTON_OFF` | Boton de apagado (INPUT_PULLUP, debounce 200ms, doble lectura) |
+| GPIO 13 | `PIN_ESTOP` | Boton E-Stop NC (INPUT_PULLUP, interrupcion RISING, debounce 300ms) |
+| GPIO 34 | `pinBateria` | Lectura de bateria via divisor de voltaje factor 5.37 (ADC, 12 bits) |
 | GPIO 36 | `pinLM35` | Lectura de sensor LM35 (ADC, 12 bits) |
-| GPIO 18 | `AIN1` | Motor DC - direccion A (TB6612FNG) |
-| GPIO 19 | `AIN2` | Motor DC - direccion B (TB6612FNG) |
-| GPIO 21 | `PWMA` | Motor DC - PWM velocidad (TB6612FNG, 1kHz, 8 bits) |
-| GPIO 22 | `STBY` | Motor DC - standby (TB6612FNG, siempre HIGH) |
+| GPIO 19 | `AIN1` | Motor DC - direccion A (TB6612FNG) |
+| GPIO 18 | `AIN2` | Motor DC - direccion B (TB6612FNG) |
+| GPIO 26 | `PWMA` | Motor DC - PWM velocidad (TB6612FNG, 1kHz, 8 bits) |
+| — | `STBY` | Motor DC - standby (TB6612FNG, puenteado a 3.3V) |
 
 ### 12.3 Parametros de vision
 
@@ -935,29 +941,18 @@ El boton **GENERAR REPORTE** en la interfaz SCADA crea un archivo `Reporte_SCADA
 ## 13. Estructura de archivos
 
 ```
-EstacionamientoAmarillo/
+Vision/
 |
 |-- ControlLinea_skfuzzys2.py          # Control difuso + vision + estaciones + MQTT
-|-- Scada.py                           # Interfaz SCADA: monitoreo, control, zonas, CSV, PDF
+|-- Scada2.py                          # Interfaz SCADA: monitoreo, control, zonas, CSV, PDF
 |-- eventos.csv                        # Registro de eventos (generado automaticamente)
 |-- DOCUMENTACION_s2.md                # Este archivo
+|-- LOGICA_DIFUSA.md                   # Guia completa de la logica difusa utilizada
+|-- GUIA_ESTUDIO_JURADO.md            # Guia de estudio para presentacion ante jurado
+|-- Guia_PLC_MQTT.md                   # Guia de integracion PLC S7-1200 via Node-RED
 |
 |-- ControlAckermanMQTTs2/
 |   |-- ControlAckermanMQTTs2.ino      # Firmware ESP32: servo + motor + sensores + E-Stop
-```
-
-### Archivos auxiliares en el directorio padre (Vision/)
-
-```
-Vision/
-|
-|-- rangosHSV.py                       # Utilidad para calibrar rangos HSV de colores
-|-- rangos.txt                         # Rangos HSV guardados de la ultima calibracion
-|-- DOCUMENTACION.md                   # Documentacion de la version s1
-|-- ControlLinea_skfuzzys1.py          # Version s1 (sin estaciones de color)
-|-- Scada.py                           # Version s1 del SCADA
-|-- ControlAckermanMQTTs1/             # Version s1 del firmware ESP32
-|-- VersionesControl/                  # Versiones anteriores del control
 ```
 
 ---
@@ -987,7 +982,7 @@ Vision/
 [Anti-rebote + conteo]              |
   contadores por color              |
          |                           |
-   4ta linea detectada?              |
+   3ra linea detectada?              |
     /           \                    |
    Si            No                  |
    |              \                  |
@@ -1027,7 +1022,7 @@ Vision/
        bateria/      LM35/uno]   arranque/paro
        porcentaje]
 
-              [Scada.py recibe todo]
+              [Scada2.py recibe todo]
                          |
          +-------+------+------+-------+
          |       |             |       |
@@ -1050,7 +1045,7 @@ Vision/
 | Curvas | Radio 80 cm y 150 cm |
 | Margen exterior | 35 cm |
 | Colores de estacion | Rojo (descarga), Azul (carga), Amarillo (reposo) |
-| Lineas por estacion | 4 lineas de color perpendiculares antes de la zona |
+| Lineas por estacion | 3 lineas de color perpendiculares antes de la zona |
 
 ---
 
@@ -1071,7 +1066,7 @@ Vision/
 | `ROI_COLOR_INICIO` | `0.55` | Inicio de la franja de deteccion de color |
 | `ROI_COLOR_FIN` | `0.85` | Fin de la franja de deteccion de color |
 | `MIN_AREA_COLOR` | `1500` | Area minima para deteccion de color valida (pixeles) |
-| `LINEAS_PARA_ESTACIONAR` | `4` | Numero de lineas de un color para activar parada |
+| `LINEAS_PARA_ESTACIONAR` | `3` | Numero de lineas de un color para activar parada |
 | `TIEMPO_ESPERA_ESTACION` | `5.0` | Segundos de espera en estaciones Rojo/Azul |
 | `COOLDOWN_SALIDA` | `3.0` | Segundos de cooldown post-salida de estacion |
 | `RANGOS_HSV` | (ver tabla) | Rangos HSV para cada color. Calibrar con rangosHSV.py |
@@ -1086,15 +1081,68 @@ Vision/
 | `SERVO_MIN` | `65` | Angulo minimo del servo |
 | `SERVO_MAX` | `160` | Angulo maximo del servo |
 | `SERVO_RECTO` | `113` | Angulo recto |
-| `VELOCIDAD_FIJA` | `70` | PWM del motor (0-255) |
-| `debounceDelay` | `50` | Delay de anti-rebote para botones (ms) |
-| `voltajeMaxBat` | `12.6` | Voltaje maximo de la bateria (V) |
-| `voltajeMinBat` | `9.0` | Voltaje minimo de la bateria (V) |
-| `factorDivisor` | `5.0` | Factor del divisor de voltaje (30k / 7.5k) |
+| `VELOCIDAD_FIJA` | `50` | PWM del motor (0-255) |
+| `debounceDelay` | `200` | Delay de anti-rebote para botones (ms) |
+| `voltajeMaxBat` | `11.3` | Voltaje maximo de la bateria (V) |
+| `voltajeMinBat` | `8.0` | Voltaje minimo de la bateria (V) |
+| `factorDivisor` | `5.37` | Factor del divisor de voltaje |
 
 ---
 
-## 17. Requisitos para ejecutar el proyecto
+## 17. Integracion con PLC Siemens S7-1200
+
+El sistema soporta integracion con un PLC Siemens S7-1200 para control industrial del AGV. Como el firmware v1.0 del PLC no soporta MQTT nativo, se utiliza **Node-RED** como puente entre el protocolo S7 del PLC y el broker MQTT (Mosquitto).
+
+### Arquitectura PLC
+
+```
++----------------+     Protocolo S7     +------------------+      MQTT       +-------------+
+|  PLC S7-1200   | <=================> |  Raspberry Pi    | <=============> |   ESP32     |
+|  (firmware v1) |     Puerto 102      |  - Mosquitto     |   Puerto 1883   |  Ackermann  |
+|                |                      |  - Node-RED      |                 |             |
+|  DB1 (DB_AGV)  |                      |  node-red-       |                 |  GO / STOP  |
+|                |                      |  contrib-s7      |                 |  MOVIMIENTO |
++----------------+                      +------------------+                 +-------------+
+```
+
+### Variables del PLC (DB1)
+
+| Variable | Tipo | Direccion | Descripcion | Direccion |
+|---|---|---|---|---|
+| `boton_arranque` | Bool | DB1.DBX0.0 | PLC envia GO al AGV | PLC -> AGV |
+| `boton_paro` | Bool | DB1.DBX0.1 | PLC envia STOP al AGV | PLC -> AGV |
+| `boton_emergencia` | Bool | DB1.DBX0.2 | PLC envia EMERGENCIA | PLC -> AGV |
+| `boton_reset` | Bool | DB1.DBX0.3 | PLC envia RESET_EMERGENCIA | PLC -> AGV |
+| `estado_movimiento` | Bool | DB1.DBX1.0 | AGV en movimiento | AGV -> PLC |
+| `estado_paro` | Bool | DB1.DBX1.1 | AGV en paro | AGV -> PLC |
+| `estado_emergencia` | Bool | DB1.DBX1.2 | AGV en emergencia | AGV -> PLC |
+| `temperatura` | Real | DB1.DBD2 | Temperatura LM35 | AGV -> PLC |
+| `bateria` | Real | DB1.DBD6 | Porcentaje bateria | AGV -> PLC |
+
+### Flujo PLC -> AGV
+
+```
+Boton fisico PLC (I0.0) -> DB1.DBX0.0 = TRUE (programa LAD)
+    -> Node-RED lee via protocolo S7 (puerto 102)
+    -> Node-RED publica "GO" en "esp32/arranque" via MQTT
+    -> ESP32 recibe -> motor ON
+    -> ESP32 publica "MOVIMIENTO" en "arranque/paro"
+    -> Node-RED escribe DB1.DBX1.0 = TRUE en el PLC
+    -> PLC enciende luz verde en Q0.0
+```
+
+### Requisitos del PLC
+
+- **PUT/GET habilitado** en propiedades del PLC (obligatorio para acceso remoto)
+- **Acceso optimizado desactivado** en DB1 (para usar direcciones absolutas)
+- PLC y Raspberry Pi en la **misma subred**
+- Node-RED con plugin `node-red-contrib-s7` instalado
+
+> La guia completa paso a paso esta en `Guia_PLC_MQTT.md`
+
+---
+
+## 18. Requisitos para ejecutar el proyecto
 
 ### En la Raspberry Pi 4B
 
@@ -1111,7 +1159,7 @@ pip install opencv-python paho-mqtt numpy scikit-fuzzy scipy networkx reportlab 
 python3 ControlLinea_skfuzzys2.py
 
 # Ejecutar la interfaz SCADA (en otra terminal)
-python3 Scada.py
+python3 Scada2.py
 ```
 
 ### En el ESP32
@@ -1126,7 +1174,7 @@ python3 Scada.py
 
 ---
 
-## 18. Diferencias con la version s1
+## 19. Diferencias con la version s1
 
 | Aspecto | Version s1 | Version s2 (EstacionamientoAmarillo) |
 |---------|-----------|--------------------------------------|
@@ -1141,7 +1189,7 @@ python3 Scada.py
 | **SCADA focos estado** | 3 (PARO, MOVIMIENTO, EMERGENCIA) | **3 (PARO, MOVIMIENTO, EMERGENCIA)** |
 | **SCADA focos zona** | No existian | **4 (CARGA, DESCARGA, REPOSO, EN RUTA)** |
 | **Topic agv/estacion** | No existia | **Nuevo: publica zona actual del AGV** |
-| **Velocidad motor** | PWM 50 | **PWM 70** |
+| **Velocidad motor** | PWM 50 | **PWM 50** |
 | **Conjuntos difusos salida** | [80,91,102,113,120,127,135] asimetrico | **[65,81,97,113,129,145,160] simetrico** |
 | **Anti-rebote color** | No existia | **Debouncing por transicion de flanco** |
 | **Cooldown post-estacion** | No existia | **3 segundos ignorando deteccion de color** |
@@ -1149,4 +1197,4 @@ python3 Scada.py
 
 ---
 
-*Documentacion actualizada el 2026-05-25*
+*Documentacion Version Final — Actualizada el 2026-05-26*

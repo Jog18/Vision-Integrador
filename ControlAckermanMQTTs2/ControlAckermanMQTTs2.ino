@@ -39,15 +39,15 @@ const int SERVO_MAX   = 160;
 const int SERVO_RECTO = 113;
 int anguloActual = SERVO_RECTO;
 
-// LEDs indicadores de direccion
-const int ledizq = 16;
-const int ledder = 15;
+// LEDs indicadores de bateria
+const int LED_BAT1 = 22;  // Se enciende siempre que bat > 0% (nivel bajo)
+const int LED_BAT2 = 16;  // Se enciende cuando bat >= 40%  (nivel medio)
+const int LED_BAT3 = 15;  // Se enciende cuando bat >= 80%  (nivel alto)
 
-// ---- Motor (TB6612FNG) ----
+// ---- Motor (TB6612FNG) ---- STBY puenteado a 3.3V
 const int AIN1 = 19;
 const int AIN2 = 18;
 const int PWMA = 26;
-const int STBY = 22;
 const int PWM_FREQ = 1000;
 const int PWM_RESOLUTION = 8;
 const int VELOCIDAD_FIJA = 50;
@@ -60,9 +60,13 @@ const float factorDivisor = 5.37;
 float porcentajeBat = 0.0;
 // LM35
 const int pinLM35 = 36;
-int adcTemp = 0; 
+int adcTemp = 0;
 float voltajeLM35 = 0.0;
 float temperatura = 0.0;
+
+// Parpadeo LED PARO en emergencia
+unsigned long lastBlinkTime = 0;
+bool blinkState = false;
 
 // ---------- FUNCIONES MOTOR ----------
 void motorForward(int speed) {
@@ -83,6 +87,23 @@ void stopMotor() {
   ledcWrite(PWMA, 0);
 }
 
+// ---------- ACTUALIZAR LEDs DE BATERIA ----------
+void actualizarLedsBateria() {
+  if (porcentajeBat >= 80.0) {
+    digitalWrite(LED_BAT1, HIGH);
+    digitalWrite(LED_BAT2, HIGH);
+    digitalWrite(LED_BAT3, HIGH);
+  } else if (porcentajeBat >= 40.0) {
+    digitalWrite(LED_BAT1, HIGH);
+    digitalWrite(LED_BAT2, HIGH);
+    digitalWrite(LED_BAT3, LOW);
+  } else {
+    digitalWrite(LED_BAT1, HIGH);
+    digitalWrite(LED_BAT2, LOW);
+    digitalWrite(LED_BAT3, LOW);
+  }
+}
+
 // ---------- ISR PARO DE EMERGENCIA ----------
 void IRAM_ATTR isrEmergencia() {
   static unsigned long ultimaISR = 0;
@@ -93,10 +114,7 @@ void IRAM_ATTR isrEmergencia() {
   if (digitalRead(PIN_ESTOP) == LOW) return;
 
   emergencia = true;
-  digitalWrite(ledizq, LOW);
-  digitalWrite(ledder, LOW);
   digitalWrite(PIN_LED, LOW);
-  digitalWrite(PIN_LEDPARO, HIGH);
   digitalWrite(AIN1, LOW);
   digitalWrite(AIN2, LOW);
 }
@@ -113,17 +131,19 @@ void setup() {
   analogReadResolution(12);
   analogSetAttenuation(ADC_11db);
 
-  // LEDs indicadores de direccion
-  pinMode(ledizq, OUTPUT);
-  pinMode(ledder, OUTPUT);
+  // LEDs indicadores de bateria
+  pinMode(LED_BAT1, OUTPUT);
+  pinMode(LED_BAT2, OUTPUT);
+  pinMode(LED_BAT3, OUTPUT);
+  digitalWrite(LED_BAT1, LOW);
+  digitalWrite(LED_BAT2, LOW);
+  digitalWrite(LED_BAT3, LOW);
 
   // Motor
   pinMode(AIN1, OUTPUT);
   pinMode(AIN2, OUTPUT);
-  pinMode(STBY, OUTPUT);
   digitalWrite(AIN1, LOW);
   digitalWrite(AIN2, LOW);
-  digitalWrite(STBY, HIGH);
 
   // Servo
   ESP32PWM::allocateTimer(0);
@@ -164,19 +184,30 @@ void loop() {
 
   client.loop();
 
-  // Si hay emergencia, mantener todo apagado
+  // Si hay emergencia, mantener motor apagado y parpadear LED PARO
   if (emergencia) {
-    apagarTodo();
-    ledState = false;
+    stopMotor();
 
-    if (lastLedState != ledState) {
-      lastLedState = ledState;
+    if (lastLedState != ledState || ledState) {
+      ledState = false;
+      lastLedState = false;
       client.publish("arranque/paro", "EMERGENCIA");
+      digitalWrite(PIN_LED, LOW);
       Serial.println("PARO DE EMERGENCIA ACTIVADO");
+    }
+
+    // Parpadeo del LED PARO en emergencia (300ms ON / 300ms OFF)
+    unsigned long ahora = millis();
+    if (ahora - lastBlinkTime >= 300) {
+      lastBlinkTime = ahora;
+      blinkState = !blinkState;
+      digitalWrite(PIN_LEDPARO, blinkState ? HIGH : LOW);
     }
 
     if (flag == false && digitalRead(PIN_ESTOP) == LOW) {
       emergencia = false;
+      blinkState = false;
+      digitalWrite(PIN_LEDPARO, HIGH);
       Serial.println("E-Stop liberado. Presione ON o envie GO para reanudar.");
     }
     return;
@@ -196,19 +227,21 @@ void loop() {
     } else {
       client.publish("arranque/paro", "PARO");
       digitalWrite(PIN_LEDPARO, HIGH);
-      apagarTodo();
+      stopMotor();
       Serial.println("Estado: PARO");
     }
   }
 
+  // Seguridad: mantener motor apagado si no esta en movimiento
   if (!ledState) {
-    apagarTodo();
+    stopMotor();
   }
 
   long now = millis();
   if (now - lastMsg > 1000) {
     lastMsg = now;
     enviarSensores();
+    actualizarLedsBateria();
   }
 }
 
@@ -242,8 +275,6 @@ void enviarSensores() {
 
 // ---------- APAGAR TODO ----------
 void apagarTodo() {
-  digitalWrite(ledizq, LOW);
-  digitalWrite(ledder, LOW);
   servoDir.write(SERVO_RECTO);
   anguloActual = SERVO_RECTO;
   stopMotor();
@@ -288,10 +319,9 @@ void callback(char* topic, byte* message, unsigned int length) {
   if (messageTemp == "EMERGENCIA") {
     emergencia = true;
     flag = true;
-    apagarTodo();
+    stopMotor();
     ledState = false;
     digitalWrite(PIN_LED, LOW);
-    digitalWrite(PIN_LEDPARO, HIGH);
     client.publish("arranque/paro", "EMERGENCIA");
     Serial.println("PARO DE EMERGENCIA REMOTO");
     return;
@@ -302,6 +332,8 @@ void callback(char* topic, byte* message, unsigned int length) {
     if (messageTemp == "RESET_EMERGENCIA" && digitalRead(PIN_ESTOP) == LOW) {
       emergencia = false;
       flag = false;
+      blinkState = false;
+      digitalWrite(PIN_LEDPARO, HIGH);
       Serial.println("Emergencia reseteada desde interfaz");
     }
     return;
@@ -316,17 +348,6 @@ void callback(char* topic, byte* message, unsigned int length) {
     servoDir.write(angulo);
     anguloActual = angulo;
 
-    if (angulo < SERVO_RECTO - 3) {
-      digitalWrite(ledizq, HIGH);
-      digitalWrite(ledder, LOW);
-    } else if (angulo > SERVO_RECTO + 3) {
-      digitalWrite(ledder, HIGH);
-      digitalWrite(ledizq, LOW);
-    } else {
-      digitalWrite(ledizq, HIGH);
-      digitalWrite(ledder, HIGH);
-    }
-
     Serial.print("Servo -> ");
     Serial.print(angulo);
     Serial.println(" grados");
@@ -334,22 +355,14 @@ void callback(char* topic, byte* message, unsigned int length) {
   }
 
   // ---- Comandos de arranque/paro ----
-  if (!ledState) {
-    apagarTodo();
-    digitalWrite(PIN_LEDPARO, HIGH);
-  }
-
   if (messageTemp == "STOP") {
-    apagarTodo();
     ledState = false;
-    digitalWrite(PIN_LED, ledState);
+    digitalWrite(PIN_LED, LOW);
   }
 
   if (messageTemp == "GO") {
-    apagarTodo();
     ledState = true;
-    digitalWrite(PIN_LED, ledState);
-    motorForward(VELOCIDAD_FIJA);
+    digitalWrite(PIN_LED, HIGH);
   }
 }
 
