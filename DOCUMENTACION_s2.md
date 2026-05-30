@@ -28,6 +28,7 @@
    - [5.8 Inferencia Mamdani](#58-inferencia-mamdani)
    - [5.9 Defuzzificacion — Centro de Gravedad](#59-defuzzificacion--centro-de-gravedad)
    - [5.10 Comportamiento al perder la linea](#510-comportamiento-al-perder-la-linea)
+   - [5.11 Justificacion de las decisiones de diseno](#511-justificacion-de-las-decisiones-de-diseno-del-sistema-difuso)
 6. [Maquina de Estados — Estaciones de color](#6-maquina-de-estados--estaciones-de-color)
    - [6.1 Estados](#61-estados)
    - [6.2 Diagrama de transiciones](#62-diagrama-de-transiciones)
@@ -523,6 +524,73 @@ ultima_posicion >= 0.5 -->  servo = 160  (full derecha)
          v                         reencontrar la linea]
   Envia angulo MQTT
 ```
+
+### 5.11 Justificacion de las decisiones de diseno del sistema difuso
+
+Esta seccion detalla el **por que** de cada decision tomada en el diseno del controlador difuso.
+
+> Para una version extendida con tablas comparativas detalladas, consultar `LOGICA_DIFUSA.md`, seccion 13.
+
+#### Por que logica difusa y no PID u ON-OFF
+
+La posicion de la linea detectada por la camara tiene **ruido inherente** (variaciones de iluminacion, vibraciones del chasis, resoluciones de pixel). Un controlador ON-OFF produciria oscilaciones constantes entre dos estados. Un PID requeriria un modelo matematico de la cinematica Ackermann y sintonizacion experimental de Kp, Ki, Kd. La logica difusa permite disenar el controlador con **conocimiento intuitivo** ("si la linea esta un poco a la izquierda, gira un poco a la izquierda") sin modelar la planta, y produce respuesta suave de forma natural gracias al traslape de conjuntos y la defuzzificacion por centroide.
+
+#### Por que Mamdani y no Sugeno
+
+Se eligio Mamdani porque tanto la entrada como la salida se expresan en **terminos linguisticos** (`IF posicion ES poco_izquierda THEN servo ES poco_izquierda`). Esto permite que cualquier miembro del equipo entienda y modifique las reglas sin conocimientos avanzados. Sugeno seria mas eficiente computacionalmente, pero su salida es un numero (no un conjunto difuso), perdiendo la interpretabilidad linguistica que el proyecto requiere demostrar. Ademas, `skfuzzy.control` implementa Mamdani nativamente con su API de alto nivel.
+
+#### Por que 7 conjuntos difusos
+
+Con 7 conjuntos se obtienen **3 niveles de correccion a cada lado** del centro:
+- **Poco** → correcciones leves para rectas y curvas amplias
+- **Medio** → correcciones moderadas para curvas de radio ~150 cm
+- **Muy** → correcciones maximas para curvas cerradas de radio ~80 cm o recuperacion al borde
+
+Con 3 o 5 conjuntos, el sistema no distinguiria desviaciones leves de moderadas. Con 9+, los conjuntos adicionales no aportarian diferencia practica. La pista tiene curvas de **80 cm y 150 cm de radio**, justificando 3 niveles distintos.
+
+#### Por que triangulares y trapezoidales (no gaussianas)
+
+1. **Eficiencia computacional:** Se ejecuta en cada frame (~30 fps) en Raspberry Pi 4B. Las MFs lineales son operaciones simples que minimizan carga de CPU.
+2. **Limites exactos:** Con `trimf`/`trapmf` la pertenencia es exactamente 0 fuera del rango definido. Con gaussianas, las colas infinitas activarian reglas irrelevantes.
+3. **Traslape controlado:** El patron [0.20, 0.35, 0.50] y [0.35, 0.50, 0.65] genera traslape exacto del 50%, garantizando siempre al menos un conjunto activo y maximo dos.
+4. **Extremos trapezoidales:** `muy_izq` y `muy_der` usan meseta en el borde del universo para asegurar pertenencia maxima (1.0) cuando la linea esta en el extremo del frame.
+
+#### Por que defuzzificacion por centroide
+
+El centroide calcula el centro de gravedad del area agregada, produciendo una **salida continua y suave** que responde proporcionalmente a la contribucion de cada regla activa. Metodos como MOM/SOM/LOM pueden producir saltos discretos cuando cambia la regla dominante. Para un servo de direccion, los saltos bruscos causan inestabilidad mecanica, haciendo el centroide la opcion idonea.
+
+#### Por que entrada normalizada [0, 1]
+
+La normalizacion `cx / ancho_frame` hace al controlador **independiente de la resolucion** de la camara. Si se cambia de 640x480 a otra resolucion, el sistema difuso funciona sin modificar parametros. El centro siempre es 0.5.
+
+#### Por que rango de salida [65, 160] con centro en 113
+
+Estos valores provienen de las **restricciones mecanicas** del servo y la geometria Ackermann 1:10:
+- **113 grados** = posicion neutra (ruedas rectas), determinada empiricamente
+- **65 y 160 grados** = topes mecanicos del mecanismo de direccion
+- Rango simetrico: ~48 grados a cada lado, permitiendo distribucion uniforme de conjuntos con 16 grados de espaciado
+
+#### Por que mapeo 1:1 en las reglas
+
+El mapeo directo (cada conjunto de entrada a su homologos de salida) es suficiente porque las **transiciones suaves se logran por el traslape de conjuntos**, no por reglas cruzadas. Cuando la posicion cae entre dos conjuntos, ambas reglas se activan parcialmente y el centroide produce un angulo intermedio automaticamente. Reglas cruzadas aumentarian la complejidad sin beneficio.
+
+#### Por que una sola variable de entrada
+
+La posicion horizontal contiene **toda la informacion necesaria** para un seguidor de linea a velocidad constante (PWM fijo = 50). Con 2 entradas de 7 conjuntos, la base de reglas creceria a 49 reglas; con 3, a 343. La complejidad crece exponencialmente sin beneficio proporcional para este caso de uso.
+
+#### Resumen de decisiones
+
+| Decision | Elegido | Descartado | Razon |
+|---|---|---|---|
+| Controlador | Logica difusa | PID, ON-OFF | No requiere modelo, maneja incertidumbre |
+| Inferencia | Mamdani | Sugeno | Interpretabilidad linguistica |
+| Conjuntos | 7 por variable | 3, 5, 9 | 3 niveles de correccion por lado |
+| MFs | Triangular + Trapezoidal | Gaussiana | Eficiencia, limites exactos |
+| Defuzzificacion | Centroide | MOM, SOM, LOM | Salida suave y continua |
+| Entrada | Normalizada [0,1] | Pixeles | Independencia de resolucion |
+| Salida | [65, 160], centro 113 | Otro rango | Restricciones mecanicas reales |
+| Reglas | 7 directas (1:1) | Cruzadas | El traslape genera interpolacion |
+| Variables | 1 (posicion) | 2+ | Velocidad constante, suficiente |
 
 ---
 

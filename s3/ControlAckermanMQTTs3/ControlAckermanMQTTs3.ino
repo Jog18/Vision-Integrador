@@ -40,9 +40,9 @@ const int SERVO_RECTO = 113;
 int anguloActual = SERVO_RECTO;
 
 // LEDs indicadores de bateria
-const int LED_BAT1 = 22;  // Se enciende siempre que bat > 0% (nivel bajo)
-const int LED_BAT2 = 16;  // Se enciende cuando bat >= 40%  (nivel medio)
-const int LED_BAT3 = 15;  // Se enciende cuando bat >= 80%  (nivel alto)
+const int LED_BAT1 = 22;
+const int LED_BAT2 = 16;
+const int LED_BAT3 = 15;
 
 // ---- Motor (TB6612FNG) ---- STBY puenteado a 3.3V
 const int AIN1 = 19;
@@ -51,6 +51,10 @@ const int PWMA = 26;
 const int PWM_FREQ = 1000;
 const int PWM_RESOLUTION = 8;
 const int VELOCIDAD_FIJA = 50;
+
+// ---- Direccion del motor (s3: soporte para reversa) ----
+bool enReversa = false;
+bool lastEnReversa = false;
 
 // Leer sensores. BATERIA
 const int pinBateria = 34;
@@ -187,6 +191,7 @@ void loop() {
   // Si hay emergencia, mantener motor apagado y parpadear LED PARO
   if (emergencia) {
     stopMotor();
+    enReversa = false;
 
     if (lastLedState != ledState || ledState) {
       ledState = false;
@@ -216,14 +221,20 @@ void loop() {
   // --- Operacion normal ---
   startStop();
 
-  // Publicar estado arranque/paro SOLO cuando cambia
-  if (ledState != lastLedState) {
+  // Publicar estado y activar motor cuando cambia ledState o enReversa
+  if (ledState != lastLedState || enReversa != lastEnReversa) {
     lastLedState = ledState;
+    lastEnReversa = enReversa;
     if (ledState) {
       client.publish("arranque/paro", "MOVIMIENTO");
       digitalWrite(PIN_LEDPARO, LOW);
-      motorForward(VELOCIDAD_FIJA);
-      Serial.println("Estado: MOVIMIENTO (motor adelante)");
+      if (enReversa) {
+        motorBackward(VELOCIDAD_FIJA);
+        Serial.println("Estado: MOVIMIENTO (motor reversa)");
+      } else {
+        motorForward(VELOCIDAD_FIJA);
+        Serial.println("Estado: MOVIMIENTO (motor adelante)");
+      }
     } else {
       client.publish("arranque/paro", "PARO");
       digitalWrite(PIN_LEDPARO, HIGH);
@@ -277,6 +288,7 @@ void enviarSensores() {
 void apagarTodo() {
   servoDir.write(SERVO_RECTO);
   anguloActual = SERVO_RECTO;
+  enReversa = false;
   stopMotor();
 }
 
@@ -320,6 +332,7 @@ void callback(char* topic, byte* message, unsigned int length) {
     emergencia = true;
     flag = true;
     stopMotor();
+    enReversa = false;
     ledState = false;
     digitalWrite(PIN_LED, LOW);
     client.publish("arranque/paro", "EMERGENCIA");
@@ -339,7 +352,7 @@ void callback(char* topic, byte* message, unsigned int length) {
     return;
   }
 
-  // ---- Control del servo de direccion (desde control difuso) ----
+  // ---- Control del servo de direccion (desde control difuso o maniobra) ----
   if (String(topic) == "esp32/servo/control" && ledState) {
     int angulo = messageTemp.toInt();
     if (angulo < SERVO_MIN) angulo = SERVO_MIN;
@@ -354,13 +367,21 @@ void callback(char* topic, byte* message, unsigned int length) {
     return;
   }
 
-  // ---- Comandos de arranque/paro ----
+  // ---- Comandos de arranque/paro/reversa ----
   if (messageTemp == "STOP") {
     ledState = false;
+    enReversa = false;
     digitalWrite(PIN_LED, LOW);
   }
 
   if (messageTemp == "GO") {
+    enReversa = false;
+    ledState = true;
+    digitalWrite(PIN_LED, HIGH);
+  }
+
+  if (messageTemp == "REVERSE") {
+    enReversa = true;
     ledState = true;
     digitalWrite(PIN_LED, HIGH);
   }
@@ -393,6 +414,7 @@ void startStop() {
     if (readingOn != buttonStateOn) {
       buttonStateOn = readingOn;
       if (buttonStateOn == LOW) {
+        enReversa = false;
         ledState = true;
         digitalWrite(PIN_LED, ledState);
         Serial.println("LED ENCENDIDO");
@@ -413,6 +435,7 @@ void startStop() {
       bool confirmacion = digitalRead(PIN_BOTON_OFF);
       if (confirmacion == readingOff && readingOff == LOW) {
         buttonStateOff = readingOff;
+        enReversa = false;
         ledState = false;
         digitalWrite(PIN_LED, ledState);
         Serial.println("LED APAGADO");

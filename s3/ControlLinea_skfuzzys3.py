@@ -2,6 +2,7 @@
 """
 Control Difuso para Carro Ackermann 1:10 — Seguidor de Linea
 con Maquina de Estados para 3 estaciones de color (Rojo, Azul, Amarillo).
+VERSION s3: Maniobra de estacionamiento (entrada + salida).
 
 PISTA: 240x240cm, linea blanca sobre fondo negro, estaciones 50x50cm.
        Curvas de radio 80cm y 150cm. Margen exterior 35cm.
@@ -10,14 +11,16 @@ LOGICA:
   - Sigue linea blanca con control difuso (Mamdani, skfuzzy).
   - Detecta lineas de color perpendiculares a la pista (Rojo, Azul, Amarillo).
   - Cuenta lineas con anti-rebote (debouncing por transicion).
-  - En la 4ta linea de un color: se detiene en la estacion.
-  - Rojo (descarga) / Azul (carga): se detiene 5 segundos y sale automaticamente.
+  - En la 3ra linea de un color: ejecuta MANIOBRA DE ESTACIONAMIENTO.
+  - Rojo (descarga) / Azul (carga): espera 5 segundos y sale con maniobra.
   - Amarillo: reposo indefinido hasta comando externo (SCADA o boton).
 
 ESTADOS:
-  SEGUIR_LINEA      -> Seguimiento normal + deteccion/conteo de lineas
-  ESPERA_ESTACION   -> Rojo/Azul: motor detenido 5 segundos
-  REPOSO_AMARILLO   -> Amarillo: motor detenido hasta comando externo
+  SEGUIR_LINEA       -> Seguimiento normal + deteccion/conteo de lineas
+  ESTACIONANDO       -> Maniobra de entrada a la estacion (multi-paso)
+  ESPERA_ESTACION    -> Rojo/Azul: motor detenido 5 segundos
+  REPOSO_AMARILLO    -> Amarillo: motor detenido hasta comando externo
+  SALIENDO_ESTACION  -> Maniobra de salida de la estacion (multi-paso)
 
 @author: oreaj
 """
@@ -90,15 +93,12 @@ SERVO_RECTO = 113
 # --- Deteccion de linea blanca ---
 UMBRAL_BLANCO = 200
 MIN_AREA_LINEA = 300
-ROI_PROPORCION = 1   # 100% del frame para seguimiento de linea
+ROI_PROPORCION = 1
 
 # --- Deteccion de lineas de color ---
 ROI_COLOR_INICIO = 0.55
 ROI_COLOR_FIN = 0.85
 
-# Rangos HSV para cada color.
-# >>> CALIBRAR CON rangosHSV.py ANTES DE USAR <<<
-# Rojo usa DOS mascaras (hue wraps around 0/180 en HSV)
 RANGOS_HSV = {
     'Rojo_bajo': {'bajo': np.array([0,   120, 70]), 'alto': np.array([10,  255, 255])},
     'Rojo_alto': {'bajo': np.array([170, 120, 70]), 'alto': np.array([180, 255, 255])},
@@ -108,7 +108,6 @@ RANGOS_HSV = {
 
 MIN_AREA_COLOR = 1500
 
-# Numero de linea en la que se activa la parada en estacion
 LINEAS_PARA_ESTACIONAR = 3
 
 # --- Tiempos ---
@@ -124,12 +123,70 @@ ZONAS = {
 
 
 # ============================================================
+# CONFIGURACION DE MANIOBRA DE ESTACIONAMIENTO (s3)
+# ============================================================
+
+# Lado de la pista donde se encuentra cada estacion.
+# 'derecha' = la estacion esta a la derecha del sentido de marcha.
+# 'izquierda' = la estacion esta a la izquierda.
+# >>> AJUSTAR SEGUN LA PISTA REAL <<<
+LADO_ESTACION = {
+    'Rojo':     'derecha',
+    'Azul':     'derecha',
+    'Amarillo': 'derecha',
+}
+
+# Tiempos de cada paso de la maniobra (en segundos).
+# >>> CALIBRAR EN LA PISTA REAL — dependen de la velocidad PWM y el radio de giro <<<
+TIEMPO_AVANCE_PASALINEA   = 0.5   # avanzar recto para rebasar la linea de color
+TIEMPO_GIRO_ENTRADA       = 1.5   # girar hacia la estacion (forward + servo al maximo)
+TIEMPO_ENDEREZAR_ENTRADA  = 0.5   # enderezar dentro de la estacion (forward + servo recto)
+TIEMPO_GIRO_SALIDA        = 1.5   # reversa girando de vuelta hacia la pista
+TIEMPO_REVERSA_RECTA      = 0.5   # reversa recto para alinear con la pista
+TIEMPO_AVANCE_BUSQUEDA    = 0.5   # avanzar recto buscando la linea blanca
+
+
+def generar_maniobra_entrada(color):
+    """
+    Genera la secuencia de pasos para entrar a la estacion.
+    Cada paso: (angulo_servo, comando_motor, duracion_seg, descripcion)
+    """
+    lado = LADO_ESTACION.get(color, 'derecha')
+    angulo_giro = SERVO_MAX if lado == 'derecha' else SERVO_MIN
+
+    return [
+        (SERVO_RECTO, 'GO',   TIEMPO_AVANCE_PASALINEA,  'Avanzar recto para rebasar linea'),
+        (angulo_giro, 'GO',   TIEMPO_GIRO_ENTRADA,      f'Girar {lado} entrando a estacion'),
+        (SERVO_RECTO, 'GO',   TIEMPO_ENDEREZAR_ENTRADA, 'Enderezar dentro de estacion'),
+        (SERVO_RECTO, 'STOP', 0.0,                      'Detenido en estacion'),
+    ]
+
+
+def generar_maniobra_salida(color):
+    """
+    Genera la secuencia de pasos para salir de la estacion.
+    Cada paso: (angulo_servo, comando_motor, duracion_seg, descripcion)
+    """
+    lado = LADO_ESTACION.get(color, 'derecha')
+    # Para salir, se gira al lado OPUESTO en reversa
+    angulo_giro = SERVO_MIN if lado == 'derecha' else SERVO_MAX
+
+    return [
+        (angulo_giro, 'REVERSE', TIEMPO_GIRO_SALIDA,     f'Reversa girando hacia la pista'),
+        (SERVO_RECTO, 'REVERSE', TIEMPO_REVERSA_RECTA,   'Reversa recto para alinear'),
+        (SERVO_RECTO, 'GO',      TIEMPO_AVANCE_BUSQUEDA, 'Avanzar buscando linea blanca'),
+    ]
+
+
+# ============================================================
 # ESTADOS DE LA MAQUINA DE ESTADOS
 # ============================================================
 
 SEGUIR_LINEA = "SEGUIR_LINEA"
+ESTACIONANDO = "ESTACIONANDO"
 ESPERA_ESTACION = "ESPERA_ESTACION"
 REPOSO_AMARILLO = "REPOSO_AMARILLO"
+SALIENDO_ESTACION = "SALIENDO_ESTACION"
 
 
 # ============================================================
@@ -169,35 +226,34 @@ def calcular_angulo(simulacion, posicion_norm):
 def cmd_stop(client):
     """Envia comando STOP al ESP32."""
     client.publish(TOPIC_ARRANQUE, "STOP")
-    print("[ESTACION] Comando STOP enviado al ESP32")
+    print("[MOTOR] STOP")
 
 
 def cmd_go(client):
-    """Envia comando GO al ESP32."""
+    """Envia comando GO al ESP32 (motor hacia adelante)."""
     client.publish(TOPIC_ARRANQUE, "GO")
-    print("[ESTACION] Comando GO enviado al ESP32")
+    print("[MOTOR] GO (adelante)")
 
 
-def publicar_estacion(client, color):
+def cmd_reverse(client):
+    """Envia comando REVERSE al ESP32 (motor en reversa)."""
+    client.publish(TOPIC_ARRANQUE, "REVERSE")
+    print("[MOTOR] REVERSE")
+
+
+def publicar_estacion(client, zona):
     """Publica la zona actual del AGV."""
-    zona = ZONAS.get(color, "EN_RUTA")
     client.publish(TOPIC_ESTACION, zona)
-    print(f"[ESTACION] Publicado zona: {zona} ({color})")
+    print(f"[ESTACION] Publicado zona: {zona}")
 
 
 # ============================================================
 # MATRIZ DE TRANSFORMACION — Correccion de perspectiva de camara
 # ============================================================
-# Se aplica una transformacion afin al ROI de color para compensar
-# la distorsion de perspectiva de la camara montada en el AGV.
-# Puntos origen y destino calibrados para la camara a 15cm de altura.
-#
-#
+
 SRC_POINTS = np.float32([[0, 0], [640, 0], [0, 144]])
 DST_POINTS = np.float32([[10, 0], [630, 0], [0, 144]])
 MATRIZ_PERSPECTIVA = cv2.getAffineTransform(SRC_POINTS, DST_POINTS)
-# La matriz resultante es 2x3 y se aplica en detectar_lineas_color()
-# para corregir la deformacion trapezoidal del ROI de deteccion.
 
 
 # ============================================================
@@ -233,19 +289,17 @@ def detectar_lineas_color(frame, height):
     y_fin = int(height * ROI_COLOR_FIN)
     roi = frame[y_ini:y_fin, :]
 
-    # Aplicar matriz de transformacion afin (correccion de perspectiva)
     roi_w = roi.shape[1]
     roi_h = roi.shape[0]
     roi = cv2.warpAffine(roi, MATRIZ_PERSPECTIVA, (roi_w, roi_h))
 
-    # Filtro Gaussiano para reducir ruido y falsos positivos
     roi_filtrado = cv2.GaussianBlur(roi, (7, 7), 0)
     hsv = cv2.cvtColor(roi_filtrado, cv2.COLOR_BGR2HSV)
 
     kernel = np.ones((7, 7), np.uint8)
     visibles = {}
 
-    # --- Rojo: combinar DOS mascaras (hue 0-10 y 170-180) ---
+    # --- Rojo: combinar DOS mascaras ---
     mascara_rojo1 = cv2.inRange(hsv, RANGOS_HSV['Rojo_bajo']['bajo'],
                                      RANGOS_HSV['Rojo_bajo']['alto'])
     mascara_rojo2 = cv2.inRange(hsv, RANGOS_HSV['Rojo_alto']['bajo'],
@@ -268,13 +322,12 @@ def detectar_lineas_color(frame, height):
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
     visibles['Rojo'] = detectado_rojo
 
-    # --- Azul y Amarillo: mascara simple con filtrado mejorado ---
+    # --- Azul y Amarillo ---
     for color in ['Azul', 'Amarillo']:
         rango = RANGOS_HSV[color]
         mascara = cv2.inRange(hsv, rango['bajo'], rango['alto'])
         mascara = cv2.morphologyEx(mascara, cv2.MORPH_OPEN, kernel)
         mascara = cv2.morphologyEx(mascara, cv2.MORPH_CLOSE, kernel)
-        # Erosion extra para amarillo (reduce falsos positivos)
         if color == 'Amarillo':
             mascara = cv2.erode(mascara, np.ones((3, 3), np.uint8), iterations=1)
 
@@ -387,11 +440,41 @@ def dibujar_hud_seguimiento(frame, angulo, linea_detectada, posicion_norm,
                     cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 200, 200), 1)
 
 
+def dibujar_hud_maniobra(frame, titulo, paso_actual, total_pasos, descripcion,
+                          progreso, color_estacion):
+    """HUD para los estados ESTACIONANDO y SALIENDO_ESTACION."""
+    colores_bgr = {'Rojo': (0, 0, 255), 'Azul': (255, 100, 0), 'Amarillo': (0, 255, 255)}
+    color = colores_bgr.get(color_estacion, (255, 255, 255))
+
+    cv2.putText(frame, titulo, (10, 35),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
+    cv2.putText(frame, f"Estacion: {color_estacion} ({ZONAS.get(color_estacion, '')})",
+                (10, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 1)
+    cv2.putText(frame, f"Paso {paso_actual + 1}/{total_pasos}: {descripcion}",
+                (10, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+
+    # Barra de progreso del paso actual
+    barra_x = 10
+    barra_y = 115
+    barra_w = 300
+    barra_h = 15
+    cv2.rectangle(frame, (barra_x, barra_y),
+                  (barra_x + barra_w, barra_y + barra_h), (80, 80, 80), -1)
+    progreso_w = int(barra_w * min(1.0, progreso))
+    if progreso_w > 0:
+        cv2.rectangle(frame, (barra_x, barra_y),
+                      (barra_x + progreso_w, barra_y + barra_h), color, -1)
+    cv2.rectangle(frame, (barra_x, barra_y),
+                  (barra_x + barra_w, barra_y + barra_h), (150, 150, 150), 1)
+
+
 def dibujar_hud_estado(frame, estado, info_extra=""):
     colores_estado = {
-        SEGUIR_LINEA:     (0, 220, 0),
-        ESPERA_ESTACION:  (0, 255, 255),
-        REPOSO_AMARILLO:  (0, 200, 255),
+        SEGUIR_LINEA:      (0, 220, 0),
+        ESTACIONANDO:      (0, 180, 255),
+        ESPERA_ESTACION:   (0, 255, 255),
+        REPOSO_AMARILLO:   (0, 200, 255),
+        SALIENDO_ESTACION: (180, 220, 0),
     }
     color = colores_estado.get(estado, (255, 255, 255))
     cv2.putText(frame, f"Pi: {estado}", (10, 470),
@@ -401,6 +484,26 @@ def dibujar_hud_estado(frame, estado, info_extra=""):
     if info_extra:
         cv2.putText(frame, info_extra, (10, 415),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+
+
+# ============================================================
+# FUNCION AUXILIAR: Ejecutar un paso de maniobra
+# ============================================================
+
+def ejecutar_paso_maniobra(client, paso):
+    """Envia los comandos MQTT correspondientes a un paso de maniobra."""
+    angulo, comando, _, descripcion = paso
+
+    enviar_angulo_servo(client, angulo)
+
+    if comando == 'STOP':
+        cmd_stop(client)
+    elif comando == 'REVERSE':
+        cmd_reverse(client)
+    else:
+        cmd_go(client)
+
+    print(f"[MANIOBRA] {descripcion} | Servo={angulo} | Motor={comando}")
 
 
 # ============================================================
@@ -443,14 +546,21 @@ def main():
     tiempo_salida = 0.0
     en_cooldown = False
 
+    # --- Variables de maniobra (s3) ---
+    maniobra_pasos = []        # lista de pasos de la maniobra actual
+    maniobra_idx = 0           # indice del paso actual
+    maniobra_inicio_paso = 0.0 # timestamp de inicio del paso actual
+    maniobra_paso_iniciado = False
+
     # Publicar estado inicial
-    client.publish(TOPIC_ESTACION, "EN_RUTA")
+    publicar_estacion(client, "EN_RUTA")
 
     print("=" * 60)
-    print("MAQUINA DE ESTADOS — Seguidor de Linea + 3 Estaciones")
-    print(f"  Parar en la linea #{LINEAS_PARA_ESTACIONAR} de cada color")
+    print("MAQUINA DE ESTADOS — Seguidor de Linea + Estacionamiento")
+    print(f"  Estacionar en la linea #{LINEAS_PARA_ESTACIONAR} de cada color")
     print(f"  Rojo (descarga) / Azul (carga): espera {TIEMPO_ESPERA_ESTACION}s")
     print(f"  Amarillo: reposo indefinido")
+    print(f"  Maniobra de entrada y salida habilitada")
     print("  ESC para salir")
     print("=" * 60)
 
@@ -495,32 +605,26 @@ def main():
                 elif not visibles[color] and linea_visible[color]:
                     linea_visible[color] = False
 
-            # --- Verificar si hay que detenerse en estacion ---
+            # --- Verificar si hay que estacionar ---
             if color_que_para is not None:
                 color_estacion_actual = color_que_para
                 contadores[color_que_para] = 0
                 linea_visible[color_que_para] = False
 
-                # Detener el AGV
-                cmd_stop(client)
-                publicar_estacion(client, color_estacion_actual)
+                # Iniciar maniobra de entrada
+                maniobra_pasos = generar_maniobra_entrada(color_estacion_actual)
+                maniobra_idx = 0
+                maniobra_paso_iniciado = False
 
-                # Forzar estado local a PARO para evitar salida inmediata
-                # (el mensaje MQTT de vuelta del ESP32 puede tardar)
-                estado_esp32 = "PARO"
+                estado_esp32 = "PARO"  # forzar estado local
+                publicar_estacion(client, "ESTACIONANDO")
 
-                if color_estacion_actual == 'Amarillo':
-                    estado = REPOSO_AMARILLO
-                    print(f"[FSM] {SEGUIR_LINEA} -> {REPOSO_AMARILLO}")
-                else:
-                    estado = ESPERA_ESTACION
-                    tiempo_inicio_espera = time.time()
-                    zona = ZONAS[color_estacion_actual]
-                    print(f"[FSM] {SEGUIR_LINEA} -> {ESPERA_ESTACION} "
-                          f"({color_estacion_actual} = {zona}, {TIEMPO_ESPERA_ESTACION}s)")
+                estado = ESTACIONANDO
+                print(f"[FSM] {SEGUIR_LINEA} -> {ESTACIONANDO} "
+                      f"({color_estacion_actual} = {ZONAS[color_estacion_actual]})")
 
                 dibujar_hud_estado(frame, estado,
-                                   f"Estacion: {color_estacion_actual}")
+                                   f"Estacionando: {color_estacion_actual}")
                 cv2.imshow("Seguidor de Linea", frame)
                 cv2.waitKey(1)
                 continue
@@ -556,8 +660,59 @@ def main():
             cv2.imshow("Umbral Linea (ROI)", thresh)
 
         # ==============================================================
+        # ESTADO: ESTACIONANDO (maniobra de entrada multi-paso)
+        # ==============================================================
+        elif estado == ESTACIONANDO:
+
+            paso = maniobra_pasos[maniobra_idx]
+            _, _, duracion, descripcion = paso
+
+            # Iniciar el paso actual si no se ha iniciado
+            if not maniobra_paso_iniciado:
+                ejecutar_paso_maniobra(client, paso)
+                maniobra_inicio_paso = time.time()
+                maniobra_paso_iniciado = True
+
+            # Calcular progreso del paso
+            if duracion > 0:
+                transcurrido = time.time() - maniobra_inicio_paso
+                progreso = transcurrido / duracion
+            else:
+                transcurrido = 0
+                progreso = 1.0
+
+            # HUD de maniobra
+            dibujar_hud_maniobra(frame, "ESTACIONANDO",
+                                 maniobra_idx, len(maniobra_pasos),
+                                 descripcion, progreso, color_estacion_actual)
+            dibujar_hud_estado(frame, estado,
+                               f"Paso {maniobra_idx + 1}/{len(maniobra_pasos)}")
+
+            # Verificar si el paso termino
+            if duracion == 0 or transcurrido >= duracion:
+                maniobra_idx += 1
+                maniobra_paso_iniciado = False
+
+                # Verificar si la maniobra completa termino
+                if maniobra_idx >= len(maniobra_pasos):
+                    cmd_stop(client)
+                    zona = ZONAS[color_estacion_actual]
+                    publicar_estacion(client, zona)
+
+                    if color_estacion_actual == 'Amarillo':
+                        estado = REPOSO_AMARILLO
+                        print(f"[FSM] {ESTACIONANDO} -> {REPOSO_AMARILLO}")
+                    else:
+                        estado = ESPERA_ESTACION
+                        tiempo_inicio_espera = time.time()
+                        print(f"[FSM] {ESTACIONANDO} -> {ESPERA_ESTACION} "
+                              f"({color_estacion_actual} = {zona}, "
+                              f"{TIEMPO_ESPERA_ESTACION}s)")
+
+        # ==============================================================
         # ESTADO: ESPERA_ESTACION (Rojo / Azul)
         # Motor detenido durante TIEMPO_ESPERA_ESTACION segundos.
+        # Al terminar, inicia maniobra de SALIDA.
         # ==============================================================
         elif estado == ESPERA_ESTACION:
             transcurrido = time.time() - tiempo_inicio_espera
@@ -571,23 +726,21 @@ def main():
             dibujar_hud_estado(frame, estado, f"Salida en {restante:.1f}s")
 
             if transcurrido >= TIEMPO_ESPERA_ESTACION:
-                # Reanudar movimiento
-                cmd_go(client)
-                client.publish(TOPIC_ESTACION, "EN_RUTA")
+                # Iniciar maniobra de salida
+                maniobra_pasos = generar_maniobra_salida(color_estacion_actual)
+                maniobra_idx = 0
+                maniobra_paso_iniciado = False
 
-                estado = SEGUIR_LINEA
-                en_cooldown = True
-                tiempo_salida = time.time()
-                color_estacion_actual = None
-                ultimo_angulo = SERVO_RECTO
-                for c in linea_visible:
-                    linea_visible[c] = False
-                print(f"[FSM] {ESPERA_ESTACION} -> {SEGUIR_LINEA} (cooldown activo)")
+                publicar_estacion(client, "SALIENDO")
+
+                estado = SALIENDO_ESTACION
+                print(f"[FSM] {ESPERA_ESTACION} -> {SALIENDO_ESTACION}")
 
         # ==============================================================
         # ESTADO: REPOSO_AMARILLO
         # Motor detenido de forma indefinida.
         # Sale cuando el ESP32 reporta MOVIMIENTO (por SCADA GO o boton ON).
+        # Al salir, inicia maniobra de SALIDA.
         # ==============================================================
         elif estado == REPOSO_AMARILLO:
             cv2.putText(frame, "REPOSO — Estacion Amarilla", (10, 35),
@@ -599,16 +752,68 @@ def main():
             dibujar_hud_estado(frame, estado)
 
             if estado_esp32 == "MOVIMIENTO":
-                client.publish(TOPIC_ESTACION, "EN_RUTA")
+                # Iniciar maniobra de salida
+                maniobra_pasos = generar_maniobra_salida(color_estacion_actual)
+                maniobra_idx = 0
+                maniobra_paso_iniciado = False
 
-                estado = SEGUIR_LINEA
-                en_cooldown = True
-                tiempo_salida = time.time()
-                color_estacion_actual = None
-                ultimo_angulo = SERVO_RECTO
-                for c in linea_visible:
-                    linea_visible[c] = False
-                print(f"[FSM] {REPOSO_AMARILLO} -> {SEGUIR_LINEA} (cooldown activo)")
+                publicar_estacion(client, "SALIENDO")
+
+                estado = SALIENDO_ESTACION
+                print(f"[FSM] {REPOSO_AMARILLO} -> {SALIENDO_ESTACION}")
+
+        # ==============================================================
+        # ESTADO: SALIENDO_ESTACION (maniobra de salida multi-paso)
+        # Al terminar, transiciona a SEGUIR_LINEA con cooldown.
+        # ==============================================================
+        elif estado == SALIENDO_ESTACION:
+
+            paso = maniobra_pasos[maniobra_idx]
+            _, _, duracion, descripcion = paso
+
+            if not maniobra_paso_iniciado:
+                ejecutar_paso_maniobra(client, paso)
+                maniobra_inicio_paso = time.time()
+                maniobra_paso_iniciado = True
+
+            if duracion > 0:
+                transcurrido = time.time() - maniobra_inicio_paso
+                progreso = transcurrido / duracion
+            else:
+                transcurrido = 0
+                progreso = 1.0
+
+            dibujar_hud_maniobra(frame, "SALIENDO DE ESTACION",
+                                 maniobra_idx, len(maniobra_pasos),
+                                 descripcion, progreso, color_estacion_actual)
+            dibujar_hud_estado(frame, estado,
+                               f"Paso {maniobra_idx + 1}/{len(maniobra_pasos)}")
+
+            if duracion == 0 or transcurrido >= duracion:
+                maniobra_idx += 1
+                maniobra_paso_iniciado = False
+
+                if maniobra_idx >= len(maniobra_pasos):
+                    # Maniobra de salida completa -> volver a seguir linea
+                    publicar_estacion(client, "EN_RUTA")
+
+                    # Establecer ultima_posicion para buscar la linea
+                    # del lado correcto al volver a SEGUIR_LINEA
+                    lado = LADO_ESTACION.get(color_estacion_actual, 'derecha')
+                    if lado == 'derecha':
+                        ultima_posicion = 0.0  # buscar hacia la izquierda
+                    else:
+                        ultima_posicion = 1.0  # buscar hacia la derecha
+
+                    estado = SEGUIR_LINEA
+                    en_cooldown = True
+                    tiempo_salida = time.time()
+                    color_estacion_actual = None
+                    ultimo_angulo = SERVO_RECTO
+                    for c in linea_visible:
+                        linea_visible[c] = False
+                    print(f"[FSM] {SALIENDO_ESTACION} -> {SEGUIR_LINEA} "
+                          f"(cooldown activo)")
 
         # --- Mostrar ventana principal ---
         cv2.imshow("Seguidor de Linea", frame)
@@ -617,6 +822,7 @@ def main():
             break
 
     # --- Limpieza ---
+    cmd_stop(client)
     picam2.stop()
     cv2.destroyAllWindows()
     client.loop_stop()
